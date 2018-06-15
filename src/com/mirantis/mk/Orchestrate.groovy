@@ -4,7 +4,7 @@ package com.mirantis.mk
  *
 */
 
-dev RunTestSaltCmd(master) {
+def RunTestSaltCmd(master) {
     def salt = new com.mirantis.mk.Salt()
     salt.enforceState(master, 'I@salt:master', 'keystone.orchestrate.deploy')
 }
