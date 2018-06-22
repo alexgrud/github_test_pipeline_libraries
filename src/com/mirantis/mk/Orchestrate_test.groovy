@@ -9,6 +9,11 @@ def RunTestSaltCmd(master) {
      salt.enforceState(master, 'I@salt:master', 'keystone.orchestrate.deploy')
 }
 
+def RunTestSaltOrchestrate(master) {
+    def salt = new com.mirantis.mk.Salt()
+    salt.orchestrateSystem(master, 'I@salt:master', 'keystone.orchestrate.deploy')
+}
+
 def validateFoundationInfra(master) {
     def salt = new com.mirantis.mk.Salt()
 
