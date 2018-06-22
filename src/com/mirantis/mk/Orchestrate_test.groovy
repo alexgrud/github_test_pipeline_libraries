@@ -11,7 +11,8 @@ def RunTestSaltCmd(master) {
 
 def RunTestSaltOrchestrate(master) {
     def salt = new com.mirantis.mk.Salt()
-    salt.orchestrateSystem(master, ['expression': 'I@salt:master', 'type': 'compound'], 'keystone.orchestrate.deploy')
+    //salt.orchestrateSystem(master, ['expression': 'I@salt:master', 'type': 'compound'], 'keystone.orchestrate.deploy')
+    def out = salt.cmdRun(master, 'I@salt:master', 'salt-run state.orchestrate keystone.orchestrate.deploy')
 }
 
 def validateFoundationInfra(master) {
