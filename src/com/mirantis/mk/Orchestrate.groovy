@@ -4,10 +4,6 @@ package com.mirantis.mk
  *
 */
 
-def RunTestSaltCmd(master) {
-    def salt = new com.mirantis.mk.Salt()
-    salt.enforceState(master, 'I@salt:master', 'keystone.orchestrate.deploy')
-}
 def validateFoundationInfra(master) {
     def salt = new com.mirantis.mk.Salt()
 
@@ -556,6 +552,11 @@ def installOpenstackCompute(master) {
             }
         }
     }
+
+    // Run nova:controller to map cmp with cells
+    if (salt.testTarget(master, 'I@nova:controller')) {
+      salt.enforceState(master, 'I@nova:controller and *01*', 'nova.controller')
+    }
 }
 
 
@@ -572,6 +573,7 @@ def installContrailNetwork(master) {
     salt.enforceStateWithExclude(master, "I@opencontrail:control and *01*", "opencontrail", "opencontrail.client")
     salt.enforceStateWithExclude(master, "I@opencontrail:control", "opencontrail", "opencontrail.client")
     salt.enforceStateWithExclude(master, "I@opencontrail:collector and *01*", "opencontrail", "opencontrail.client")
+    salt.enforceStateWithExclude(master, "I@opencontrail:collector", "opencontrail", "opencontrail.client")
 
     if (salt.testTarget(master, 'I@docker:client and I@opencontrail:control')) {
         salt.enforceState(master, 'I@opencontrail:control or I@opencontrail:collector', 'docker.client')
@@ -689,10 +691,6 @@ def installCicd(master) {
     salt.fullRefresh(master, gerrit_compound)
     salt.fullRefresh(master, jenkins_compound)
 
-    if (salt.testTarget(master, 'I@aptly:publisher')) {
-        salt.enforceState(master, 'I@aptly:publisher', 'aptly.publisher',true, null, false, -1, 2)
-    }
-
     salt.enforceState(master, 'I@docker:swarm:role:master and I@jenkins:client', 'docker.client', true, true, null, false, -1, 2)
 
     // API timeout in minutes
@@ -746,10 +744,6 @@ def installCicd(master) {
       salt.cmdRun(master, jenkins_compound, 'timeout ' + (wait_timeout*60+3) + ' /bin/sh -c -- ' + '"' + check_jenkins_cmd + '"')
     }
 
-    if (salt.testTarget(master, 'I@aptly:server')) {
-        salt.enforceState(master, 'I@aptly:server', 'aptly', true, true, null, false, -1, 2)
-    }
-
     if (salt.testTarget(master, 'I@openldap:client')) {
         salt.enforceState(master, 'I@openldap:client', 'openldap', true, true, null, false, -1, 2)
     }
@@ -797,7 +791,7 @@ def installStacklight(master) {
         }
 
         if (salt.testTarget(master, 'I@glusterfs:client')) {
-            salt.enforceState(master, 'I@glusterfs:client', 'glusterfs.client')
+            salt.enforceState(master, 'I@glusterfs:client', 'glusterfs.client', true, true, null, false, -1, 2)
         }
     }
 
