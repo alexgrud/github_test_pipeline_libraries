@@ -136,7 +136,7 @@ def getGrain(saltId, target, grain = null) {
  * @return output of salt command
  */
 def getConfig(saltId, target, config) {
-    return runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'config.get', null, [config.replace('.', ':')])
+    return runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'config.get', null, [config.replace('.', ':')], --out=json)
 }
 
 /**
