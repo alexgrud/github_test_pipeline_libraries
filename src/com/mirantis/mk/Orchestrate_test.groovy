@@ -15,9 +15,9 @@ def RunTestSaltOrchestrate(master) {
     def out = salt.cmdRun(master, 'I@salt:master', 'salt-run state.orchestrate keystone.orchestrate.deploy')
 }
 
-def RunTestGetConfig(master) {
+def RunTestGetConfig(master, config) {
     def salt = new com.mirantis.mk.Salt_test()
-    salt.getConfig(master, 'I@salt:master', 'orchestration.deploy.applications')
+    salt.getConfig(master, 'I@salt:master', config)
 }
 
 def validateFoundationInfra(master) {
