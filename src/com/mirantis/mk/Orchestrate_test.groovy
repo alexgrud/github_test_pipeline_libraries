@@ -5,14 +5,19 @@ package com.mirantis.mk
 */
 
 def RunTestSaltCmd(master) {
-    def salt = new com.mirantis.mk.Salt()
+    def salt = new com.mirantis.mk.Salt_test()
      salt.enforceState(master, 'I@salt:master', 'keystone.orchestrate.deploy')
 }
 
 def RunTestSaltOrchestrate(master) {
-    def salt = new com.mirantis.mk.Salt()
+    def salt = new com.mirantis.mk.Salt_test()
     //salt.orchestrateSystem(master, ['expression': 'I@salt:master', 'type': 'compound'], 'keystone.orchestrate.deploy')
     def out = salt.cmdRun(master, 'I@salt:master', 'salt-run state.orchestrate keystone.orchestrate.deploy')
+}
+
+def RunTestGetConfig(master) {
+    def salt = new com.mirantis.mk.Salt_test()
+    salt.getConfig(master, 'I@salt:master', 'orchestration.deploy.applications')
 }
 
 def validateFoundationInfra(master) {

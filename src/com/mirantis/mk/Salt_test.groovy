@@ -128,6 +128,16 @@ def getGrain(saltId, target, grain = null) {
     }
 }
 
+/**
+ * Return config items for given saltId and target
+ * @param saltId Salt Connection object or pepperEnv (the command will be sent using the selected method)
+ * @param target Get grain target
+ * @param config grain name (optional)
+ * @return output of salt command
+ */
+def getConfig(saltId, target, config) {
+    return runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'config.get', null, [config.replace('.', ':')])
+}
 
 /**
  * Enforces state on given saltId and target
