@@ -20,6 +20,13 @@ def RunTestGetConfig(master, config) {
     salt.getConfig(master, 'I@salt:master', config)
 }
 
+@NonCPS
+def SortFunction() {
+    def sampleMap2 = ["aaa":1,"bbbb":40,"ccc":60]
+    def sortedMap = sampleMap2.sort {it.values}
+    return sortedMap
+}
+
 def validateFoundationInfra(master) {
     def salt = new com.mirantis.mk.Salt()
 
