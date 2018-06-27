@@ -1269,6 +1269,7 @@ def installOss(master) {
 def OrchestrateOpenstackApplications(master, tgt, app_list) {
     for (app in app_list {
         RunOrchestrateState(master, tgt, app)   
+    }
 }
 
 def RunOrchestrateState(master, tgt, app) {
