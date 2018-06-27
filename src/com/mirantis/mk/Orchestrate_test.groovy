@@ -1261,12 +1261,18 @@ def installOss(master) {
 }
 
 /**
- * Function receives connection string
+ * Function receives connection string TBD
  * and retrieves salt configuration defined in "config" param
  * @param master Salt Connection object or pepperEnv
  * @param config named value from the minion config file, pillar, grains or the master config
  */
-//def GetSaltConfig(master, config) {
-//    def salt = new com.mirantis.mk.Salt_test()
-//    salt.getConfig(master, 'I@salt:master', config)
-//}
+def OrchestrateOpenstackApplications(master, tgt, app_list) {
+    for (app in app_list {
+        RunOrchestrateState(master, tgt, app)   
+}
+
+def RunOrchestrateState(master, tgt, app) {
+    def salt = new com.mirantis.mk.Salt_test()
+    //salt.orchestrateSystem(master, ['expression': 'I@salt:master', 'type': 'compound'], 'keystone.orchestrate.deploy')
+    def out = salt.cmdRun(master, tgt, 'salt-run state.orchestrate ${app}.orchestrate.deploy')
+}
