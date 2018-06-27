@@ -23,7 +23,7 @@ def RunTestGetConfig(master, config) {
 @NonCPS
 def SortFunction() {
     def sampleMap2 = ["aaa":1,"bbbb":40,"ccc":60]
-    def sortedMap = sampleMap2.sort {it.values}
+    def sortedMap = sampleMap2.sort {it.value}
     return sortedMap
 }
 
