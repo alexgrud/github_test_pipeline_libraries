@@ -15,11 +15,6 @@ def RunTestSaltOrchestrate(master) {
     def out = salt.cmdRun(master, 'I@salt:master', 'salt-run state.orchestrate keystone.orchestrate.deploy')
 }
 
-def RunTestGetConfig(master, config) {
-    def salt = new com.mirantis.mk.Salt_test()
-    salt.getConfig(master, 'I@salt:master', config)
-}
-
 def validateFoundationInfra(master) {
     def salt = new com.mirantis.mk.Salt()
 
@@ -1264,3 +1259,14 @@ def installOss(master) {
   }
   salt.enforceState(master, 'I@elasticsearch:client', 'elasticsearch.client')
 }
+
+/**
+ * Function receives connection string
+ * and retrieves salt configuration defined in "config" param
+ * @param master Salt Connection object or pepperEnv
+ * @param config named value from the minion config file, pillar, grains or the master config
+ */
+//def GetSaltConfig(master, config) {
+//    def salt = new com.mirantis.mk.Salt_test()
+//    salt.getConfig(master, 'I@salt:master', config)
+//}
