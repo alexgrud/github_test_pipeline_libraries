@@ -1267,7 +1267,7 @@ def installOss(master) {
  * @param config named value from the minion config file, pillar, grains or the master config
  */
 def OrchestrateOpenstackApplications(master, tgt, app_list) {
-    for (app in app_list {
+    for (app in app_list) {
         RunOrchestrateState(master, tgt, app)   
     }
 }
