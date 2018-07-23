@@ -64,9 +64,13 @@ def runSaltCommand(saltId, client, target, function, batch = null, args = null, 
         'client': client,
         'expr_form': target.type,
     ]
-    if(batch != null && ( (batch instanceof Integer && batch > 0) || (batch instanceof String && batch.contains("%")))){
-        data['client']= "local_batch"
-        data['batch'] = batch
+
+    if(batch != null){
+        batch = batch.toString()
+        if( (batch.isInteger() && batch.toInteger() > 0) || (batch.contains("%"))){
+            data['client']= "local_batch"
+            data['batch'] = batch
+        }
     }
 
     if (args) {
@@ -128,6 +132,16 @@ def getGrain(saltId, target, grain = null) {
     }
 }
 
+/**
+ * Return config items for given saltId and target
+ * @param saltId Salt Connection object or pepperEnv (the command will be sent using the selected method)
+ * @param target Get grain target
+ * @param config grain name (optional)
+ * @return output of salt command
+ */
+def getConfig(saltId, target, config) {
+    return runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'config.get', null, [config.replace('.', ':')], '--out=json')
+}
 
 /**
  * Enforces state on given saltId and target
@@ -663,10 +677,47 @@ def generateNodeMetadata(saltId, target, host, classes, parameters) {
  * @param saltId Salt Connection object or pepperEnv (the command will be sent using the selected method)
  * @param target Orchestration target
  * @param orchestrate Salt orchestrate params
+ * @param kwargs Salt orchestrate params
  * @return output of salt command
  */
-def orchestrateSystem(saltId, target, orchestrate) {
-    return runSaltCommand(saltId, 'runner', target, 'state.orchestrate', [orchestrate])
+def orchestrateSystem(saltId, target, orchestrate=[], kwargs = null) {
+    return runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
+}
+
+/**
+ * Run salt pre or post orchestrate tasks
+ *
+ * @param  saltId       Salt Connection object or pepperEnv (the command will be sent using the selected method)
+ * @param  pillar_tree  Reclass pillar that has orchestrate pillar for desired stage
+ * @param  extra_tgt    Extra targets for compound
+ *
+ * @return              output of salt command
+ */
+def orchestratePrePost(saltId, pillar_tree, extra_tgt = '') {
+
+    def common = new com.mirantis.mk.Common()
+    def salt = new com.mirantis.mk.Salt()
+    def compound = 'I@' + pillar_tree + " " + extra_tgt
+
+    common.infoMsg("Refreshing pillars")
+    runSaltProcessStep(saltId, '*', 'saltutil.refresh_pillar', [], null, true)
+
+    common.infoMsg("Looking for orchestrate pillars")
+    if (salt.testTarget(saltId, compound)) {
+        for ( node in salt.getMinionsSorted(saltId, compound) ) {
+            def pillar = salt.getPillar(saltId, node, pillar_tree)
+            if ( !pillar['return'].isEmpty() ) {
+                for ( orch_id in pillar['return'][0].values() ) {
+                    def orchestrator = orch_id.values()['orchestrator']
+                    def orch_enabled = orch_id.values()['enabled']
+                    if ( orch_enabled ) {
+                        common.infoMsg("Orchestrating: ${orchestrator}")
+                        salt.printSaltCommandResult(salt.orchestrateSystem(saltId, ['expression': node], [orchestrator]))
+                    }
+                }
+            }
+        }
+    }
 }
 
 /**
@@ -733,6 +784,8 @@ def checkResult(result, failOnError = true, printResults = true, printOnlyChange
                             def resKey;
                             if(node instanceof Map){
                                 resKey = node.keySet()[k]
+                                if (resKey == "retcode")
+                                    continue
                             }else if(node instanceof List){
                                 resKey = k
                             }
@@ -903,9 +956,10 @@ def getFileContent(saltId, target, file) {
  * @param saltId         Salt Connection object or pepperEnv (the command will be sent using the selected method)
  * @param salt_overrides YAML formatted string containing key: value, one per line
  * @param reclass_dir    Directory where Reclass git repo is located
+ * @param extra_tgt      Extra targets for compound
  */
 
-def setSaltOverrides(saltId, salt_overrides, reclass_dir="/srv/salt/reclass") {
+def setSaltOverrides(saltId, salt_overrides, reclass_dir="/srv/salt/reclass", extra_tgt = '') {
     def common = new com.mirantis.mk.Common()
     def salt_overrides_map = readYaml text: salt_overrides
     for (entry in common.entries(salt_overrides_map)) {
@@ -913,9 +967,9 @@ def setSaltOverrides(saltId, salt_overrides, reclass_dir="/srv/salt/reclass") {
          def value = entry[1]
 
          common.debugMsg("Set salt override ${key}=${value}")
-         runSaltProcessStep(saltId, 'I@salt:master', 'reclass.cluster_meta_set', [key, value], false)
+         runSaltProcessStep(saltId, "I@salt:master ${extra_tgt}", 'reclass.cluster_meta_set', [key, value], false)
     }
-    runSaltProcessStep(saltId, 'I@salt:master', 'cmd.run', ["git -C ${reclass_dir} update-index --skip-worktree classes/cluster/overrides.yml"])
+    runSaltProcessStep(saltId, "I@salt:master ${extra_tgt}", 'cmd.run', ["git -C ${reclass_dir} update-index --skip-worktree classes/cluster/overrides.yml"])
 }
 
 /**

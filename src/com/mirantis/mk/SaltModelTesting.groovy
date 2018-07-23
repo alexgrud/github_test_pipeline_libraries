@@ -16,14 +16,15 @@ package com.mirantis.mk
  * @param legacyTestingMode   do you want to enable legacy testing mode (iterating through the nodes directory definitions instead of reading cluster models)
  * @param aptRepoUrl          package repository with salt formulas
  * @param aptRepoGPG          GPG key for apt repository with formulas
+ * Return                     true | false
  */
 
 def setupAndTestNode(masterName, clusterName, extraFormulas, testDir, formulasSource = 'pkg',
-                     formulasRevision = 'stable', reclassVersion = "master", dockerMaxCpus = 0,
-                     ignoreClassNotfound = false, legacyTestingMode = false, aptRepoUrl = '', aptRepoGPG = '') {
+                     formulasRevision = 'stable', reclassVersion = "1.5.4", dockerMaxCpus = 0,
+                     ignoreClassNotfound = false, legacyTestingMode = false, aptRepoUrl = '', aptRepoGPG = '', dockerContainerName = false) {
   // timeout for test execution (40min)
   def testTimeout = 40 * 60
-  def dockerContainerName = "${env.JOB_NAME.toLowerCase()}_${env.BUILD_TAG.toLowerCase()}"
+  def TestMarkerResult = false
   def saltOpts = "--retcode-passthrough --force-color"
   def common = new com.mirantis.mk.Common()
   def workspace = common.getWorkspace()
@@ -33,7 +34,9 @@ def setupAndTestNode(masterName, clusterName, extraFormulas, testDir, formulasSo
   if (!extraFormulas || extraFormulas == "") {
     extraFormulas = "linux"
   }
-
+  if (!dockerContainerName) {
+    dockerContainerName = 'setupAndTestNode' + UUID.randomUUID().toString()
+  }
   def dockerMaxCpusOpt = "--cpus=4"
   if (dockerMaxCpus > 0) {
     dockerMaxCpusOpt = "--cpus=${dockerMaxCpus}"
@@ -44,9 +47,7 @@ def setupAndTestNode(masterName, clusterName, extraFormulas, testDir, formulasSo
                "DEBUG=1", "MASTER_HOSTNAME=${masterName}", "CLUSTER_NAME=${clusterName}", "MINION_ID=${masterName}",
                "RECLASS_VERSION=${reclassVersion}", "RECLASS_IGNORE_CLASS_NOTFOUND=${ignoreClassNotfound}", "APT_REPOSITORY=${aptRepoUrl}",
                "APT_REPOSITORY_GPG=${aptRepoGPG}", "SALT_STOPSTART_WAIT=10"]) {
-        // To be sure that we actually re-run
-        sh("rm -v ${env.WORKSPACE}/.test_finished || true")
-        sh("git clone https://github.com/salt-formulas/salt-formulas-scripts /srv/salt/scripts")
+        sh(script: "git clone https://github.com/salt-formulas/salt-formulas-scripts /srv/salt/scripts", returnStdout: true)
         sh("""rsync -ah ${testDir}/* /srv/salt/reclass && echo '127.0.1.2  salt' >> /etc/hosts
               cd /srv/salt && find . -type f \\( -name '*.yml' -or -name '*.sh' \\) -exec sed -i 's/apt-mk.mirantis.com/apt.mirantis.net:8085/g' {} \\;
               cd /srv/salt && find . -type f \\( -name '*.yml' -or -name '*.sh' \\) -exec sed -i 's/apt.mirantis.com/apt.mirantis.net:8085/g' {} \\;""")
@@ -78,46 +79,45 @@ def setupAndTestNode(masterName, clusterName, extraFormulas, testDir, formulasSo
                   verify_salt_minions''')
           }
         }
-
         // If we didn't dropped for now - test has been passed.
-        sh("touch ${env.WORKSPACE}/.test_finished")
+        TestMarkerResult = true
       }
     }
   }
   catch (Exception er) {
-    common.infoMsg("Timeout to delete test docker container!Message:" + er.toString())
+    common.warningMsg("IgnoreMe:Something wrong with img.Message:\n" + er.toString())
   }
-  finally {
 
-    if (legacyTestingMode.toBoolean()) {
-      common.infoMsg("Running legacy mode test for master hostname ${masterName}")
-      def nodes = sh script: "find /srv/salt/reclass/nodes -name '*.yml' | grep -v 'cfg*.yml'", returnStdout: true
-      for (minion in nodes.tokenize()) {
-        def basename = sh script: "set +x;basename ${minion} .yml", returnStdout: true
-        if (!basename.trim().contains(masterName)) {
-          testMinion(basename.trim())
-        }
+  if (legacyTestingMode.toBoolean()) {
+    common.infoMsg("Running legacy mode test for master hostname ${masterName}")
+    def nodes = sh(script: "find /srv/salt/reclass/nodes -name '*.yml' | grep -v 'cfg*.yml'", returnStdout: true)
+    for (minion in nodes.tokenize()) {
+      def basename = sh(script: "set +x;basename ${minion} .yml", returnStdout: true)
+      if (!basename.trim().contains(masterName)) {
+        testMinion(basename.trim())
       }
     }
+  }
 
-    if (fileExists("${env.WORKSPACE}/.test_finished")) {
-      common.infoMsg("Test finished")
-      currentBuild.result = 'SUCCESS'
-    } else {
-      common.infoMsg("Test failed to finish!")
-      currentBuild.result = 'FAILURE'
+  try {
+    common.warningMsg("IgnoreMe:Force cleanup slave.Ignore docker-daemon errors")
+    timeout(time: 10, unit: 'SECONDS') {
+      sh(script: "set -x; docker kill ${dockerContainerName} || true", returnStdout: true)
     }
-    try {
-      timeout(time: 10, unit: 'SECONDS') {
-        common.infoMsg("Cleanup slave...Ignore docker-daemon errors")
-        sh("set -x; docker kill ${dockerContainerName} || true")
-        sh("set -x; docker rm --force ${dockerContainerName} || true")
-      }
-    }
-    catch (Exception er) {
-      common.infoMsg("Timeout to delete test docker container even with force!Continue...")
+    timeout(time: 10, unit: 'SECONDS') {
+      sh(script: "set -x; docker rm --force ${dockerContainerName} || true", returnStdout: true)
     }
   }
+  catch (Exception er) {
+    common.warningMsg("IgnoreMe:Timeout to delete test docker container with force!Message:\n" + er.toString())
+  }
+
+  if (TestMarkerResult) {
+    common.infoMsg("Test finished: SUCCESS")
+  } else {
+    common.warningMsg("Test finished: FAILURE")
+  }
+  return TestMarkerResult
 
 }
 
@@ -128,5 +128,5 @@ def setupAndTestNode(masterName, clusterName, extraFormulas, testDir, formulasSo
  */
 
 def testMinion(minionName) {
-  sh("bash -c 'source /srv/salt/scripts/bootstrap.sh; cd /srv/salt/scripts && verify_salt_minion ${minionName}'")
+  sh(script: "bash -c 'source /srv/salt/scripts/bootstrap.sh; cd /srv/salt/scripts && verify_salt_minion ${minionName}'", returnStdout: true)
 }
