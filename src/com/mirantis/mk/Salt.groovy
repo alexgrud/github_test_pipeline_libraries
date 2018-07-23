@@ -681,7 +681,7 @@ def generateNodeMetadata(saltId, target, host, classes, parameters) {
  * @return output of salt command
  */
 def orchestrateSystem(saltId, target, orchestrate=[], kwargs = null) {
-    return runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
+    return runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, -1, -1)
 }
 
 /**
