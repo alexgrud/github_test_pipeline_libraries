@@ -1276,5 +1276,5 @@ def RunOrchestrateState(master, tgt, app) {
     def salt = new com.mirantis.mk.Salt_test()
     //salt.orchestrateSystem(master, ['expression': 'I@salt:master', 'type': 'compound'], 'keystone.orchestrate.deploy')
     //def out = salt.cmdRun(master, tgt, "salt-run state.orchestrate ${app}.orchestrate.deploy")
-    def out = salt.orchestrateSystem(master, ['expression': 'I@salt:master', 'type': 'compound'], 'keystone.orchestrate.deploy')
+    def out = salt.orchestrateSystem(master, ['expression': 'I@salt:master', 'type': 'compound'], ['keystone.orchestrate.deploy'])
 }
