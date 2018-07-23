@@ -1277,5 +1277,5 @@ def RunOrchestrateState(master, tgt, app) {
     //salt.orchestrateSystem(master, ['expression': 'I@salt:master', 'type': 'compound'], 'keystone.orchestrate.deploy')
     //def out = salt.cmdRun(master, tgt, "salt-run state.orchestrate ${app}.orchestrate.deploy")
     println("Running orchestrateSystem")
-    def out = salt.orchestrateSystem(master, ['expression': 'I@salt:master', 'type': 'compound'], ['keystone.orchestrate.deploy'])
+    def out = salt.orchestrateSystem(master, ['expression': 'I@salt:master', 'type': 'compound'], ['cinder.orchestrate.deploy'])
 }
