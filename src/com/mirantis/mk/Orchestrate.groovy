@@ -1281,7 +1281,8 @@ def installOss(master, extra_tgt = '') {
  * @param app_list List of applications to execute orchestration states on
  */
 def OrchestrateApplications(master, tgt, app_list) {
+    def salt = new com.mirantis.mk.Salt()
     for (app in app_list) {
-        salt.orchestrateSystem(saltId, ['expression': tgt, 'type': compound], "${app}.orchestrate.deploy")
+        salt.orchestrateSystem(saltId, ['expression': tgt, 'type': 'compound'], "${app}.orchestrate.deploy")
     }
 }
