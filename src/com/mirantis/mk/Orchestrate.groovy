@@ -1287,6 +1287,14 @@ def OrchestrateApplications(master, tgt, app_list) {
     }
 }
 
+/**
+ * Function receives connection string, target and configuration yaml pattern
+ * and retrieves config fom salt minion according to pattern. After that it
+ * sorts applications according to priorities and runs orchestration states
+ * @param master Salt Connection object or pepperEnv
+ * @param tgt Target
+ * @param conf Configuration pattern
+ */
  def getOrchestrateApplications(master, tgt, conf) {
     def salt = new com.mirantis.mk.Salt()
     def common = new com.mirantis.mk.Common()
@@ -1297,7 +1305,7 @@ def OrchestrateApplications(master, tgt, app_list) {
             _orch_app[k] = _orch['return'][0].values()[0][k].values()[0].toInteger()
           }
     def _orch_app_sorted = common.SortMapByValueAsc(_orch_app)
-    println(_orch_app_sorted.keySet())
+    common.infoMsg("Applications will be deployed in following order:"+_orch_app_sorted.keySet())
     def out = OrchestrateApplications(master, tgt, _orch_app_sorted.keySet())
       }
       else {
