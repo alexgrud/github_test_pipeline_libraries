@@ -1272,3 +1272,16 @@ def installOss(master, extra_tgt = '') {
   }
   salt.enforceState(master, "I@elasticsearch:client ${extra_tgt}", 'elasticsearch.client')
 }
+
+/**
+ * Function receives connection string, target and list of applications
+ * and runs orchestration states on given list
+ * @param master Salt Connection object or pepperEnv
+ * @param tgt Target
+ * @param app_list List of applications to execute orchestration states on
+ */
+def OrchestrateApplications(master, tgt, app_list) {
+    for (app in app_list) {
+        salt.orchestrateSystem(saltId, ['expression': tgt, 'type': compound], "${app}.orchestrate.deploy")
+    }
+}
