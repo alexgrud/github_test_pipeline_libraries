@@ -1274,20 +1274,6 @@ def installOss(master, extra_tgt = '') {
 }
 
 /**
- * Function receives connection string, target and list of applications
- * and runs orchestration states on given list
- * @param master Salt Connection object or pepperEnv
- * @param tgt Target
- * @param app_list List of applications to execute orchestration states on
- */
-def OrchestrateApplications(master, tgt, app_list) {
-    def salt = new com.mirantis.mk.Salt()
-    for (app in app_list) {
-        salt.orchestrateSystem(master, ['expression': tgt, 'type': 'compound'], "${app}.orchestrate.deploy")
-    }
-}
-
-/**
  * Function receives connection string, target and configuration yaml pattern
  * and retrieves config fom salt minion according to pattern. After that it
  * sorts applications according to priorities and runs orchestration states
@@ -1295,7 +1281,7 @@ def OrchestrateApplications(master, tgt, app_list) {
  * @param tgt Target
  * @param conf Configuration pattern
  */
- def getOrchestrateApplications(master, tgt, conf) {
+ def OrchestrateApplications(master, tgt, conf) {
     def salt = new com.mirantis.mk.Salt()
     def common = new com.mirantis.mk.Common()
     def _orch = salt.getConfig(master, tgt, conf)
@@ -1306,7 +1292,9 @@ def OrchestrateApplications(master, tgt, app_list) {
           }
     def _orch_app_sorted = common.SortMapByValueAsc(_orch_app)
     common.infoMsg("Applications will be deployed in following order:"+_orch_app_sorted.keySet())
-    def out = OrchestrateApplications(master, tgt, _orch_app_sorted.keySet())
+    for (app in _orch_app_sorted.keySet()) {
+    salt.orchestrateSystem(master, ['expression': tgt, 'type': 'compound'], "${app}.orchestrate.deploy")
+    }
       }
       else {
             common.infoMsg("No applications found for orchestration")
