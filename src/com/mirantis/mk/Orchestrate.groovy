@@ -1286,3 +1286,19 @@ def OrchestrateApplications(master, tgt, app_list) {
         salt.orchestrateSystem(master, ['expression': tgt, 'type': 'compound'], "${app}.orchestrate.deploy")
     }
 }
+
+ def getOrchestrateApplications(master, tgt, conf) {
+          def _orch = salt.getConfig(master, tgt, conf)
+            if ( !_orch['return'][0].values()[0].isEmpty() ) {
+              Map<String,Integer> _orch_app = [:]
+            for (k in _orch['return'][0].values()[0].keySet()) {
+              _orch_app[k] = _orch['return'][0].values()[0][k].values()[0].toInteger()
+            }
+          def _orch_app_sorted = common.SortMapByValueAsc(_orch_app)
+          println(_orch_app_sorted.keySet())
+          def out = orchestrate.OrchestrateApplications(master, tgt, _orch_app_sorted.keySet())
+          }
+          else {
+            common.infoMsg("No applications found for orchestration")
+          }
+        }
