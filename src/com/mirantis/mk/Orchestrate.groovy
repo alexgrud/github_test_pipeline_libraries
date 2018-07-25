@@ -1283,6 +1283,6 @@ def installOss(master, extra_tgt = '') {
 def OrchestrateApplications(master, tgt, app_list) {
     def salt = new com.mirantis.mk.Salt()
     for (app in app_list) {
-        salt.orchestrateSystem(saltId, ['expression': tgt, 'type': 'compound'], "${app}.orchestrate.deploy")
+        salt.orchestrateSystem(master, ['expression': tgt, 'type': 'compound'], "${app}.orchestrate.deploy")
     }
 }
