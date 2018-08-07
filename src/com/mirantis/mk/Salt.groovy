@@ -684,7 +684,9 @@ def orchestrateSystem(saltId, target, orchestrate=[], kwargs = null) {
     //Since the runSaltCommand uses "arg" (singular) for "runner" client this won`t work correctly on salt 2016
     //cause this version of salt uses "args" (plural) for "runner client", see following link for reference:
     //https://github.com/saltstack/salt/pull/32938
-    return runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
+    //return runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
+    out = runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
+    checkResult(out, failOnError, output)
 }
 
 /**
