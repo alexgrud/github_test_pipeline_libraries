@@ -686,7 +686,7 @@ def orchestrateSystem(saltId, target, orchestrate=[], kwargs = null) {
     //https://github.com/saltstack/salt/pull/32938
     //return runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
     out = runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
-    checkResult(out, failOnError, output)
+    checkResult(out, true, true)
 }
 
 /**
