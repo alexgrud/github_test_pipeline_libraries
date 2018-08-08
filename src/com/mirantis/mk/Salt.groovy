@@ -685,8 +685,11 @@ def orchestrateSystem(saltId, target, orchestrate=[], kwargs = null) {
     //cause this version of salt uses "args" (plural) for "runner client", see following link for reference:
     //https://github.com/saltstack/salt/pull/32938
     //return runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
-    out = runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
-    checkResultRunner(out, true, true)
+    def result = runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
+    def retcode = result['return'][0]['retcode']
+            if (retcode==1) {
+               throw new Exception("Orchestration state failed while running orchestration state for: "+orchestrate) 
+            }
 }
 
 /**
@@ -861,16 +864,16 @@ def checkResult(result, failOnError = true, printResults = true, printOnlyChange
     }
 }
 
-def checkResultRunner(result, failOnError = true, printResults = true, printOnlyChanges = true, disableAskOnError = false) {
-    def common = new com.mirantis.mk.Common()
-    if(result != null){
-        if(result['return']){
+//def checkResultRunner(result, failOnError = true, printResults = true, printOnlyChanges = true, disableAskOnError = false) {
+  //  def common = new com.mirantis.mk.Common()
+    //if(result != null){
+      //  if(result['return']){
             //println(result['return'].size())
-            println(result['return'][0]['retcode'])
-            def retcode = result['return'][0]['retcode']
-            if (retcode==1) {
-               throw new Exception("Orchestration state failed") 
-            }
+        //    println(result['return'][0]['retcode'])
+         //   def retcode = result['return'][0]['retcode']
+          //  if (retcode==1) {
+          //     throw new Exception("Orchestration state failed") 
+          //  }
             //for (int i=0;i<result['return'].size();i++) {
             //    def entry = result['return'][i]
             //    if (!entry) {
@@ -881,14 +884,14 @@ def checkResultRunner(result, failOnError = true, printResults = true, printOnly
             //        }
             //    }//end check if entry is empty
             //}//end for cycle
-
-        }else{
-            common.errorMsg("Salt result hasn't return attribute! Result: ${result}")
-        }
-    }else{
-        common.errorMsg("Cannot check salt result, given result is null")
-    }//end if result is not null
-}
+//
+  //      }else{
+    //        common.errorMsg("Salt result hasn't return attribute! Result: ${result}")
+      //  }
+   // }else{
+     //   common.errorMsg("Cannot check salt result, given result is null")
+   // }//end if result is not null
+//}
 
 
 /**
