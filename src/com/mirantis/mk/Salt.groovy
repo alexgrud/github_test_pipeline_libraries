@@ -691,8 +691,8 @@ def orchestrateSystem(saltId, target, orchestrate=[], kwargs = null) {
     println(result['return'][0]['data'].size())
     println(result['return'][0]['data'])
     println(result['return'][0]['data'].keySet())
-    println(result['return'][0]['data'].keySet()[0])
-    println(result['return'][0]['data'].keySet()[0].keyset())
+    println(result['return'][0]['data'].keySet().values())
+    println(result['return'][0]['data'].keySet().values()[0])
            // if (retcode==1) {
            //    throw new Exception("Orchestration state failed while running orchestration state for: "+orchestrate) 
            // }
