@@ -866,7 +866,7 @@ def checkResultRunner(result, failOnError = true, printResults = true, printOnly
     if(result != null){
         if(result['return']){
             println(result['return'].size())
-            println(result['return'][0])
+            println(result['return'][0][data].keySet())
             for (int i=0;i<result['return'].size();i++) {
                 def entry = result['return'][i]
                 if (!entry) {
