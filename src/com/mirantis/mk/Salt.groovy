@@ -686,7 +686,7 @@ def orchestrateSystem(saltId, target, orchestrate=[], kwargs = null) {
     //https://github.com/saltstack/salt/pull/32938
     //return runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
     out = runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
-    checkResult(out, true, true)
+    checkResultRunner(out, true, true)
 }
 
 /**
@@ -860,6 +860,20 @@ def checkResult(result, failOnError = true, printResults = true, printOnlyChange
         common.errorMsg("Cannot check salt result, given result is null")
     }
 }
+
+def checkResultRunner(result, failOnError = true, printResults = true, printOnlyChanges = true, disableAskOnError = false) {
+    def common = new com.mirantis.mk.Common()
+    if(result != null){
+        if(result['return']){
+            println(result['return'].size())
+        }else{
+            common.errorMsg("Salt result hasn't return attribute! Result: ${result}")
+        }
+    }else{
+        common.errorMsg("Cannot check salt result, given result is null")
+    }
+}
+
 
 /**
 * Parse salt API output to check minion restart and wait some time to be sure minion is up.
