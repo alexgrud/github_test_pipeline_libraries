@@ -691,7 +691,7 @@ def orchestrateSystem(saltId, target, orchestrate=[], kwargs = null) {
     println(result['return'][0].keySet())
     println(result['return'][0]['data'])
     println(result['return'][0]['data']['cfg01.ogrudev-deploy-heat-virtual-mcp-pike-dvr-ssl-70.bud-mk.local'])
-
+    println(result['return'][0]['data']['cfg01.ogrudev-deploy-heat-virtual-mcp-pike-dvr-ssl-70.bud-mk.local']['salt_|-keystone_ssh_keys_|-keystone_ssh_keys_|-state'])
 
 
            // if (retcode==1) {
