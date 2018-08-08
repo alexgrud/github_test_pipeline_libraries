@@ -686,12 +686,11 @@ def orchestrateSystem(saltId, target, orchestrate=[], kwargs = null) {
     //https://github.com/saltstack/salt/pull/32938
     //return runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
     def result = runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
-    println(result['return'][0].size())
+    println(result['return'])
+    println(result['return'][0])
     println(result['return'][0].keySet())
-    //println(result['return'][0]['data'].size())
-    println(result['return'][0]['data'])
-    println(result['return'][0]['data'].keySet())
-    println(result['return'][0]['data'][0])
+
+
 
            // if (retcode==1) {
            //    throw new Exception("Orchestration state failed while running orchestration state for: "+orchestrate) 
