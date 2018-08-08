@@ -865,8 +865,12 @@ def checkResultRunner(result, failOnError = true, printResults = true, printOnly
     def common = new com.mirantis.mk.Common()
     if(result != null){
         if(result['return']){
-            println(result['return'].size())
+            //println(result['return'].size())
             println(result['return'][0]['retcode'])
+            def retcode = result['return'][0]['retcode']
+            if (!retcode) {
+               throw new Exception("Orchestration state failed") 
+            }
             //for (int i=0;i<result['return'].size();i++) {
             //    def entry = result['return'][i]
             //    if (!entry) {
