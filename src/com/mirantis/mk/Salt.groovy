@@ -689,6 +689,7 @@ def orchestrateSystem(saltId, target, orchestrate=[], kwargs = null) {
     println(result['return'])
     println(result['return'][0])
     println(result['return'][0].keySet())
+    println(result['return'][0].keySet()[0])
 
 
 
