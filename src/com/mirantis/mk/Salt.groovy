@@ -690,7 +690,7 @@ def orchestrateSystem(saltId, target, orchestrate=[], kwargs = null) {
     println(result['return'][0])
     println(result['return'][0].keySet())
     println(result['return'][0]['data'])
-    println(result['return'][0]['data'].values()[0]['cfg01.ogrudev-deploy-heat-virtual-mcp-pike-dvr-ssl-70.bud-mk.local']
+    println(result['return'][0]['data'].values()[0]['cfg01.ogrudev-deploy-heat-virtual-mcp-pike-dvr-ssl-70.bud-mk.local'])
 
 
 
