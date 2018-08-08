@@ -868,7 +868,7 @@ def checkResultRunner(result, failOnError = true, printResults = true, printOnly
             //println(result['return'].size())
             println(result['return'][0]['retcode'])
             def retcode = result['return'][0]['retcode']
-            if (!retcode) {
+            if (retcode==1) {
                throw new Exception("Orchestration state failed") 
             }
             //for (int i=0;i<result['return'].size();i++) {
