@@ -866,17 +866,17 @@ def checkResultRunner(result, failOnError = true, printResults = true, printOnly
     if(result != null){
         if(result['return']){
             println(result['return'].size())
-            println(result['return'][0][retcode])
-            for (int i=0;i<result['return'].size();i++) {
-                def entry = result['return'][i]
-                if (!entry) {
-                    if (failOnError) {
-                        throw new Exception("Salt API returned empty response: ${result}")
-                    } else {
-                        common.errorMsg("Salt API returned empty response: ${result}")
-                    }
-                }//end check if entry is empty
-            }//end for cycle
+            println(result['return'][0]['retcode'])
+            //for (int i=0;i<result['return'].size();i++) {
+            //    def entry = result['return'][i]
+            //    if (!entry) {
+            //        if (failOnError) {
+            //            throw new Exception("Salt API returned empty response: ${result}")
+            //        } else {
+            //            common.errorMsg("Salt API returned empty response: ${result}")
+            //        }
+            //    }//end check if entry is empty
+            //}//end for cycle
 
         }else{
             common.errorMsg("Salt result hasn't return attribute! Result: ${result}")
