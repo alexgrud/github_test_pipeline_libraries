@@ -866,6 +866,8 @@ def checkResultRunner(result, failOnError = true, printResults = true, printOnly
     if(result != null){
         if(result['return']){
             println(result['return'].size())
+            println(result['return'][0]
+
         }else{
             common.errorMsg("Salt result hasn't return attribute! Result: ${result}")
         }
