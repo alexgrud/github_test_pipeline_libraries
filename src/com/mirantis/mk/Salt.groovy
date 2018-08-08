@@ -685,12 +685,13 @@ def orchestrateSystem(saltId, target, orchestrate=[], kwargs = null) {
     //cause this version of salt uses "args" (plural) for "runner client", see following link for reference:
     //https://github.com/saltstack/salt/pull/32938
     //return runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
-    return runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
-    //println(result['return'][0].size())
-    //println(result['return'][0].keySet())
+    def result = runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
+    println(result['return'][0].size())
+    println(result['return'][0].keySet())
     //println(result['return'][0]['data'].size())
-    //println(result['return'][0]['data'])
-    //println(result['return'][0]['data'][0])
+    println(result['return'][0]['data'])
+    println(result['return'][0]['data'].keySet())
+    println(result['return'][0]['data'][0])
 
            // if (retcode==1) {
            //    throw new Exception("Orchestration state failed while running orchestration state for: "+orchestrate) 
