@@ -686,17 +686,10 @@ def orchestrateSystem(saltId, target, orchestrate=[], kwargs = null) {
     //https://github.com/saltstack/salt/pull/32938
     //return runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
     def result = runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
-    println(result['return'])
-    println(result['return'][0])
-    println(result['return'][0].keySet())
-    println(result['return'][0]['data'])
-    println(result['return'][0]['data']['cfg01.ogrudev-deploy-heat-virtual-mcp-pike-dvr-ssl-70.bud-mk.local'])
-    println(result['return'][0]['data']['cfg01.ogrudev-deploy-heat-virtual-mcp-pike-dvr-ssl-70.bud-mk.local']['salt_|-keystone_ssh_keys_|-keystone_ssh_keys_|-state'])
-
-
-           // if (retcode==1) {
-           //    throw new Exception("Orchestration state failed while running orchestration state for: "+orchestrate) 
-           // }
+    def retcode = result['return'][0]['retcode']
+        if (retcode==1) {
+            throw new Exception("Orchestration state failed while running: "+orchestrate)
+        }
 }
 
 /**
