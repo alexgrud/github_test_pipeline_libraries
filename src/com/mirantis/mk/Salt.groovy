@@ -685,11 +685,29 @@ def orchestrateSystem(saltId, target, orchestrate=[], kwargs = null) {
     //cause this version of salt uses "args" (plural) for "runner client", see following link for reference:
     //https://github.com/saltstack/salt/pull/32938
     //return runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
+    def common = new com.mirantis.mk.Common()
     def result = runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
-    def retcode = result['return'][0]['retcode']
-        if (retcode==1) {
-            throw new Exception("Orchestration state failed while running: "+orchestrate)
+        if(result != null){
+            if(result['return']){
+                if(result['return'][0]['retcode']){
+                    if(result['return'][0]['retcode']==1){
+                        throw new Exception("Orchestration state failed while running: "+orchestrate)
+                    }else{
+                        common.infoMsg("Orchestration step "+orchestrate+" executed successfully")
+                    }
+                }else{
+                    common.errorMsg("Salt result has no retcode attribute! Result: ${result}")
+                }
+            }else{
+                common.errorMsg("Salt result has no return attribute! Result: ${result}")
+            }
+        }else{
+            common.errorMsg("Cannot check salt result, given result is null")
         }
+    //def retcode = result['return'][0]['retcode']
+    //    if (retcode==1) {
+    //        throw new Exception("Orchestration state failed while running: "+orchestrate)
+    //    }
 }
 
 /**
