@@ -690,7 +690,7 @@ def orchestrateSystem(saltId, target, orchestrate=[], kwargs = null) {
         if(result != null){
             if(result['return']){
                 def retcode = result['return'][0].get('retcode')
-                if (retcode==1) {
+                if (retcode<>0) {
                     throw new Exception("Orchestration state failed while running: "+orchestrate)
                  }else{
                     common.infoMsg("Orchestrate state "+orchestrate+" succeeded")
