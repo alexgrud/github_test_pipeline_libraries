@@ -692,6 +692,8 @@ def orchestrateSystem(saltId, target, orchestrate=[], kwargs = null) {
                 def retcode = result['return'][0].get('retcode')
                 if (retcode==1) {
                     throw new Exception("Orchestration state failed while running: "+orchestrate)
+                 }else{
+                    common.infoMsg("Orchestrate state "+orchestrate+" succeeded")
                  }
             }else{
                 common.errorMsg("Salt result has no return attribute! Result: ${result}")
