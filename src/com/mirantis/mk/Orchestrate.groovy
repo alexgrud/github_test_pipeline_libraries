@@ -74,6 +74,11 @@ def installFoundationInfra(master, staticMgmtNet=false, extra_tgt = '') {
     if (salt.testTarget(master, "I@auditd:service ${extra_tgt}")) {
         salt.enforceState(master, "I@auditd:service ${extra_tgt}", 'auditd')
     }
+
+    // Install and configure openscap
+    if (salt.testTarget(master, "I@openscap:service ${extra_tgt}")) {
+        salt.enforceState(master, "I@openscap:service ${extra_tgt}", 'openscap')
+    }
 }
 
 def installFoundationInfraOnTarget(master, target, staticMgmtNet=false, extra_tgt = '') {
@@ -169,12 +174,13 @@ def installInfraKvm(master, extra_tgt = '') {
 def installInfra(master, extra_tgt = '') {
     def common = new com.mirantis.mk.Common()
     def salt = new com.mirantis.mk.Salt()
+    def first_target
 
     // Install glusterfs
     if (salt.testTarget(master, "I@glusterfs:server ${extra_tgt}")) {
         salt.enforceState(master, "I@glusterfs:server ${extra_tgt}", 'glusterfs.server.service')
 
-        salt.enforceState(master, "I@glusterfs:server and *01* ${extra_tgt}", 'glusterfs.server.setup', true, true, null, false, -1, 5)
+        salt.enforceState(master, "I@glusterfs:server:role:primary ${extra_tgt}", 'glusterfs.server.setup', true, true, null, false, -1, 5)
         sleep(10)
         salt.cmdRun(master, "I@glusterfs:server ${extra_tgt}", "gluster peer status; gluster volume status")
     }
@@ -204,12 +210,13 @@ def installInfra(master, extra_tgt = '') {
     // Install docker
     if (salt.testTarget(master, "I@docker:host ${extra_tgt}")) {
         salt.enforceState(master, "I@docker:host ${extra_tgt}", 'docker.host', true, true, null, false, -1, 3)
-        salt.cmdRun(master, "I@docker:host:enabled:true ${extra_tgt}", 'docker ps')
+        salt.cmdRun(master, "I@docker:host and I@docker:host:enabled:true ${extra_tgt}", 'docker ps')
     }
 
     // Install keepalived
     if (salt.testTarget(master, "I@keepalived:cluster ${extra_tgt}")) {
-        salt.enforceState(master, "I@keepalived:cluster and *01* ${extra_tgt}", 'keepalived')
+        first_target = salt.getFirstMinion(master, "I@keepalived:cluster ${extra_tgt}")
+        salt.enforceState(master, "${first_target} ${extra_tgt}", 'keepalived')
         salt.enforceState(master, "I@keepalived:cluster ${extra_tgt}", 'keepalived')
     }
 
@@ -250,6 +257,15 @@ def installInfra(master, extra_tgt = '') {
         }
         salt.enforceState(master, "I@redis:server ${extra_tgt}", 'redis')
     }
+
+    // Install DNS services
+    if (salt.testTarget(master, "I@bind:server ${extra_tgt}")) {
+        salt.enforceState(master, "I@bind:server ${extra_tgt}", 'bind.server')
+    }
+    if (salt.testTarget(master, "I@powerdns:server ${extra_tgt}")) {
+        salt.enforceState(master, "I@powerdns:server ${extra_tgt}", 'powerdns.server')
+    }
+
     installBackup(master, 'common', extra_tgt)
 }
 
@@ -263,6 +279,7 @@ def installOpenstackInfra(master, extra_tgt = '') {
 def installOpenstackControl(master, extra_tgt = '') {
     def salt = new com.mirantis.mk.Salt()
     def common = new com.mirantis.mk.Common()
+    def first_target
 
     // Install horizon dashboard
     if (salt.testTarget(master, "I@horizon:server ${extra_tgt}")) {
@@ -279,7 +296,7 @@ def installOpenstackControl(master, extra_tgt = '') {
 
     // setup keystone service
     if (salt.testTarget(master, "I@keystone:server ${extra_tgt}")) {
-        salt.enforceState(master, "I@keystone:server and *01* ${extra_tgt}", 'keystone.server')
+        salt.enforceState(master, "I@keystone:server:role:primary ${extra_tgt}", 'keystone.server')
         salt.enforceState(master, "I@keystone:server ${extra_tgt}", 'keystone.server')
         // populate keystone services/tenants/roles/users
 
@@ -289,7 +306,8 @@ def installOpenstackControl(master, extra_tgt = '') {
         sleep(30)
     }
     if (salt.testTarget(master, "I@keystone:client ${extra_tgt}")) {
-        salt.enforceState(master, "I@keystone:client and *01* ${extra_tgt}", 'keystone.client')
+        first_target = salt.getFirstMinion(master, "I@keystone:client ${extra_tgt}")
+        salt.enforceState(master, "${first_target} ${extra_tgt}", 'keystone.client')
         salt.enforceState(master, "I@keystone:client ${extra_tgt}", 'keystone.client')
     }
     if (salt.testTarget(master, "I@keystone:server ${extra_tgt}")) {
@@ -301,8 +319,8 @@ def installOpenstackControl(master, extra_tgt = '') {
     // Install glance
     if (salt.testTarget(master, "I@glance:server ${extra_tgt}")) {
         //runSaltProcessStep(master, 'I@glance:server', 'state.sls', ['glance.server'], 1)
-        salt.enforceState(master, "I@glance:server and *01* ${extra_tgt}", 'glance.server')
-       salt.enforceState(master, "I@glance:server ${extra_tgt}", 'glance.server')
+        salt.enforceState(master, "I@glance:server:role:primary ${extra_tgt}", 'glance.server')
+        salt.enforceState(master, "I@glance:server ${extra_tgt}", 'glance.server')
     }
 
     // Check glance service
@@ -320,7 +338,7 @@ def installOpenstackControl(master, extra_tgt = '') {
     // Install and check nova service
     if (salt.testTarget(master, "I@nova:controller ${extra_tgt}")) {
         // run on first node first
-        salt.enforceState(master, "I@nova:controller and *01* ${extra_tgt}", 'nova.controller')
+        salt.enforceState(master, "I@nova:controller:role:primary ${extra_tgt}", 'nova.controller')
         salt.enforceState(master, "I@nova:controller ${extra_tgt}", 'nova.controller')
         if (salt.testTarget(master, "I@keystone:server ${extra_tgt}")) {
            common.retry(3,5){
@@ -337,7 +355,7 @@ def installOpenstackControl(master, extra_tgt = '') {
     // Install and check cinder service
     if (salt.testTarget(master, "I@cinder:controller ${extra_tgt}")) {
         // run on first node first
-        salt.enforceState(master, "I@cinder:controller and *01* ${extra_tgt}", 'cinder')
+        salt.enforceState(master, "I@cinder:controller:role:primary ${extra_tgt}", 'cinder')
         salt.enforceState(master, "I@cinder:controller ${extra_tgt}", 'cinder')
         if (salt.testTarget(master, "I@keystone:server ${extra_tgt}")) {
             common.retry(3,5){
@@ -349,7 +367,7 @@ def installOpenstackControl(master, extra_tgt = '') {
     // Install neutron service
     if (salt.testTarget(master, "I@neutron:server ${extra_tgt}")) {
         // run on first node first
-        salt.enforceState(master, "I@neutron:server and *01* ${extra_tgt}", 'neutron.server')
+        salt.enforceState(master, "I@neutron:server:role:primary ${extra_tgt}", 'neutron.server')
         salt.enforceState(master, "I@neutron:server ${extra_tgt}", 'neutron.server')
         if (salt.testTarget(master, "I@keystone:server ${extra_tgt}")) {
             common.retry(3,5){
@@ -361,11 +379,11 @@ def installOpenstackControl(master, extra_tgt = '') {
     // Install heat service
     if (salt.testTarget(master, "I@heat:server ${extra_tgt}")) {
         // run on first node first
-        salt.enforceState(master, "I@heat:server and *01* ${extra_tgt}", 'heat')
+        salt.enforceState(master, "I@heat:server:role:primary ${extra_tgt}", 'heat')
         salt.enforceState(master, "I@heat:server ${extra_tgt}", 'heat')
         if (salt.testTarget(master, "I@keystone:server ${extra_tgt}")) {
             common.retry(3,5){
-                salt.cmdRun(master, "I@keystone:server ${extra_tgt}", '. /root/keystonercv3; heat resource-type-list')
+                salt.cmdRun(master, "I@keystone:server ${extra_tgt}", '. /root/keystonercv3; openstack orchestration resource type list')
             }
         }
     }
@@ -377,13 +395,13 @@ def installOpenstackControl(master, extra_tgt = '') {
 
     // Install ironic service
     if (salt.testTarget(master, "I@ironic:api ${extra_tgt}")) {
-        salt.enforceState(master, "I@ironic:api and *01* ${extra_tgt}", 'ironic.api')
+        salt.enforceState(master, "I@ironic:api:role:primary ${extra_tgt}", 'ironic.api')
         salt.enforceState(master, "I@ironic:api ${extra_tgt}", 'ironic.api')
     }
 
     // Install manila service
     if (salt.testTarget(master, "I@manila:api ${extra_tgt}")) {
-        salt.enforceState(master, "I@manila:api and *01* ${extra_tgt}", 'manila.api')
+        salt.enforceState(master, "I@manila:api:role:primary ${extra_tgt}", 'manila.api')
         salt.enforceState(master, "I@manila:api ${extra_tgt}", 'manila.api')
     }
     if (salt.testTarget(master, "I@manila:scheduler ${extra_tgt}")) {
@@ -392,31 +410,25 @@ def installOpenstackControl(master, extra_tgt = '') {
 
     // Install designate services
     if (salt.testTarget(master, "I@designate:server:enabled ${extra_tgt}")) {
-        if (salt.testTarget(master, "I@designate:server:backend:bind9 ${extra_tgt}")) {
-            salt.enforceState(master, "I@bind:server ${extra_tgt}", 'bind.server')
-        }
-        if (salt.testTarget(master, "I@designate:server:backend:pdns4 ${extra_tgt}")) {
-            salt.enforceState(master, "I@powerdns:server ${extra_tgt}", 'powerdns.server')
-        }
-        salt.enforceState(master, "I@designate:server and *01* ${extra_tgt}", 'designate.server')
+        salt.enforceState(master, "I@designate:server:role:primary ${extra_tgt}", 'designate.server')
         salt.enforceState(master, "I@designate:server ${extra_tgt}", 'designate')
     }
 
     // Install octavia api service
     if (salt.testTarget(master, "I@octavia:api ${extra_tgt}")) {
-        salt.enforceState(master, "I@octavia:api and *01* ${extra_tgt}", 'octavia')
-        salt.enforceState(master, "I@octavia:api ${extra_tgt}", 'octavia')
+        salt.enforceState(master, "I@octavia:api:role:primary ${extra_tgt}", 'octavia.api')
+        salt.enforceState(master, "I@octavia:api ${extra_tgt}", 'octavia.api')
     }
 
     // Install DogTag server service
     if (salt.testTarget(master, "I@dogtag:server ${extra_tgt}")) {
-        salt.enforceState(master, "I@dogtag:server and *01* ${extra_tgt}", 'dogtag.server')
+        salt.enforceState(master, "I@dogtag:server:role:master ${extra_tgt}", 'dogtag.server')
         salt.enforceState(master, "I@dogtag:server ${extra_tgt}", 'dogtag.server')
     }
 
     // Install barbican server service
     if (salt.testTarget(master, "I@barbican:server ${extra_tgt}")) {
-        salt.enforceState(master, "I@barbican:server and *01* ${extra_tgt}", 'barbican.server')
+        salt.enforceState(master, "I@barbican:server:role:primary ${extra_tgt}", 'barbican.server')
         salt.enforceState(master, "I@barbican:server ${extra_tgt}", 'barbican.server')
     }
     // Install barbican client
@@ -426,38 +438,42 @@ def installOpenstackControl(master, extra_tgt = '') {
 
     // Install gnocchi server
     if (salt.testTarget(master, "I@gnocchi:server ${extra_tgt}")) {
-        salt.enforceState(master, "I@gnocchi:server and *01* ${extra_tgt}", 'gnocchi.server')
+        salt.enforceState(master, "I@gnocchi:server:role:primary ${extra_tgt}", 'gnocchi.server')
         salt.enforceState(master, "I@gnocchi:server ${extra_tgt}", 'gnocchi.server')
     }
 
     // Apply gnocchi client state to create gnocchi archive policies, due to possible
     // races, apply on the first node initially
     if (salt.testTarget(master, "I@gnocchi:client ${extra_tgt}")) {
-        salt.enforceState(master, "I@gnocchi:client and *01* ${extra_tgt}", 'gnocchi.client')
+        first_target = salt.getFirstMinion(master, "I@gnocchi:client ${extra_tgt}")
+        salt.enforceState(master, "${first_target} ${extra_tgt}", 'gnocchi.client')
         salt.enforceState(master, "I@gnocchi:client ${extra_tgt}", 'gnocchi.client')
     }
 
     // Install gnocchi statsd
     if (salt.testTarget(master, "I@gnocchi:statsd ${extra_tgt}")) {
-        salt.enforceState(master, "I@gnocchi:statsd and *01* ${extra_tgt}", 'gnocchi.statsd')
+        first_target = salt.getFirstMinion(master, "I@gnocchi:statsd ${extra_tgt}")
+        salt.enforceState(master, "${first_target} ${extra_tgt}", 'gnocchi.statsd')
         salt.enforceState(master, "I@gnocchi:statsd ${extra_tgt}", 'gnocchi.statsd')
     }
 
     // Install panko server
     if (salt.testTarget(master, "I@panko:server ${extra_tgt}")) {
-        salt.enforceState(master, "I@panko:server and *01* ${extra_tgt}", 'panko')
+        first_target = salt.getFirstMinion(master, "I@panko:server ${extra_tgt}")
+        salt.enforceState(master, "${first_target} ${extra_tgt}", 'panko')
         salt.enforceState(master, "I@panko:server ${extra_tgt}", 'panko')
     }
 
     // Install ceilometer server
     if (salt.testTarget(master, "I@ceilometer:server ${extra_tgt}")) {
-        salt.enforceState(master, "I@ceilometer:server and *01* ${extra_tgt}", 'ceilometer')
+        salt.enforceState(master, "I@ceilometer:server:role:primary ${extra_tgt}", 'ceilometer')
         salt.enforceState(master, "I@ceilometer:server ${extra_tgt}", 'ceilometer')
     }
 
     // Install aodh server
     if (salt.testTarget(master, "I@aodh:server ${extra_tgt}")) {
-        salt.enforceState(master, "I@aodh:server and *01* ${extra_tgt}", 'aodh')
+        first_target = salt.getFirstMinion(master, "I@aodh:server ${extra_tgt}")
+        salt.enforceState(master, "${first_target} ${extra_tgt}", 'aodh')
         salt.enforceState(master, "I@aodh:server ${extra_tgt}", 'aodh')
     }
 }
@@ -524,7 +540,7 @@ def installOpenstackNetwork(master, extra_tgt = '') {
     // install octavia manager services
     if (salt.testTarget(master, "I@octavia:manager ${extra_tgt}")) {
         salt.runSaltProcessStep(master, "I@salt:master ${extra_tgt}", 'mine.update', ['*'])
-        salt.enforceState(master, "I@octavia:manager ${extra_tgt}", 'octavia')
+        salt.enforceState(master, "I@octavia:manager ${extra_tgt}", 'octavia.manager')
         salt.enforceState(master, "I@octavia:manager ${extra_tgt}", 'salt.minion.ca')
         salt.enforceState(master, "I@octavia:manager ${extra_tgt}", 'salt.minion.cert')
     }
@@ -544,7 +560,7 @@ def installOpenstackCompute(master, extra_tgt = '') {
         def hightstateTarget = "${compute_compound} and not ${gluster_compound} and not ${salt_ca_compound}"
         if (salt.testTarget(master, hightstateTarget)) {
             retry(2) {
-                salt.enforceHighstateWithExclude(master, hightstateTarget, 'opencontrail.client')
+                salt.enforceHighstate(master, hightstateTarget)
             }
         } else {
             common.infoMsg("No minions matching highstate target found for target ${hightstateTarget}")
@@ -557,7 +573,7 @@ def installOpenstackCompute(master, extra_tgt = '') {
                 if ( target == cmp_target ) {
                     // Enforce highstate one by one on salt ca servers which are compute nodes
                     retry(2) {
-                        salt.enforceHighstateWithExclude(master, target, 'opencontrail.client')
+                        salt.enforceHighstate(master, target)
                     }
                 }
             }
@@ -570,7 +586,7 @@ def installOpenstackCompute(master, extra_tgt = '') {
                 if ( target == cmp_target ) {
                     // Enforce highstate one by one on glusterfs servers which are compute nodes
                     retry(2) {
-                        salt.enforceHighstateWithExclude(master, target, 'opencontrail.client')
+                        salt.enforceHighstate(master, target)
                     }
                 }
             }
@@ -579,7 +595,7 @@ def installOpenstackCompute(master, extra_tgt = '') {
 
     // Run nova:controller to map cmp with cells
     if (salt.testTarget(master, "I@nova:controller ${extra_tgt}")) {
-      salt.enforceState(master, "I@nova:controller and *01* ${extra_tgt}", 'nova.controller')
+      salt.enforceState(master, "I@nova:controller:role:primary ${extra_tgt}", 'nova.controller')
     }
 }
 
@@ -587,20 +603,23 @@ def installOpenstackCompute(master, extra_tgt = '') {
 def installContrailNetwork(master, extra_tgt = '') {
     def common = new com.mirantis.mk.Common()
     def salt = new com.mirantis.mk.Salt()
-
+    def first_target
 
     // Install opencontrail database services
-    salt.enforceState(master, "I@opencontrail:database and *01* ${extra_tgt}", 'opencontrail.database')
+    first_target = salt.getFirstMinion(master, "I@opencontrail:database ${extra_tgt}")
+    salt.enforceState(master, "${first_target} ${extra_tgt}", 'opencontrail.database')
     salt.enforceState(master, "I@opencontrail:database ${extra_tgt}", 'opencontrail.database')
 
     // Install opencontrail control services
-    salt.enforceStateWithExclude(master, "I@opencontrail:control and *01* ${extra_tgt}", "opencontrail", "opencontrail.client")
+    first_target = salt.getFirstMinion(master, "I@opencontrail:control ${extra_tgt}")
+    salt.enforceStateWithExclude(master, "${first_target} ${extra_tgt}", "opencontrail", "opencontrail.client")
     salt.enforceStateWithExclude(master, "I@opencontrail:control ${extra_tgt}", "opencontrail", "opencontrail.client")
-    salt.enforceStateWithExclude(master, "I@opencontrail:collector and *01* ${extra_tgt}", "opencontrail", "opencontrail.client")
+    first_target = salt.getFirstMinion(master, "I@opencontrail:collector ${extra_tgt}")
+    salt.enforceStateWithExclude(master, "${first_target} ${extra_tgt}", "opencontrail", "opencontrail.client")
     salt.enforceStateWithExclude(master, "I@opencontrail:collector ${extra_tgt}", "opencontrail", "opencontrail.client")
 
     if (salt.testTarget(master, "I@docker:client and I@opencontrail:control ${extra_tgt}")) {
-        salt.enforceState(master, "I@opencontrail:control or I@opencontrail:collector ${extra_tgt}", 'docker.client')
+        salt.enforceState(master, "( I@opencontrail:control or I@opencontrail:collector ) ${extra_tgt}", 'docker.client')
     }
     installBackup(master, 'contrail', extra_tgt)
 }
@@ -640,27 +659,43 @@ def installKubernetesInfra(master, extra_tgt = '') {
 
 def installKubernetesControl(master, extra_tgt = '') {
     def salt = new com.mirantis.mk.Salt()
+    def first_target
+    salt.fullRefresh(master, "* ${extra_tgt}")
+
+    // Bootstrap all nodes
+    salt.enforceState(master, "I@kubernetes:master ${extra_tgt}", 'linux')
+    salt.enforceState(master, "I@kubernetes:master ${extra_tgt}", 'salt.minion')
+    salt.enforceState(master, "I@kubernetes:master ${extra_tgt}", ['openssh', 'ntp'])
+
+    // Create and distribute SSL certificates for services using salt state
+    salt.enforceState(master, "I@kubernetes:master ${extra_tgt}", 'salt.minion.cert')
+
+    // Install docker
+    salt.enforceState(master, "I@docker:host ${extra_tgt}", 'docker.host')
 
     // Install Kubernetes pool and Calico
     salt.enforceState(master, "I@kubernetes:master ${extra_tgt}", 'kubernetes.master.kube-addons')
-    salt.enforceState(master, "I@kubernetes:pool ${extra_tgt}", 'kubernetes.pool')
+    salt.enforceState(master, "I@kubernetes:master ${extra_tgt}", 'kubernetes.pool')
 
     if (salt.testTarget(master, "I@etcd:server:setup ${extra_tgt}")) {
         // Setup etcd server
-        salt.enforceState(master, "I@kubernetes:master and *01* ${extra_tgt}", 'etcd.server.setup')
+        first_target = salt.getFirstMinion(master, "I@kubernetes:master ${extra_tgt}")
+        salt.enforceState(master, "${first_target} ${extra_tgt}", 'etcd.server.setup')
     }
 
     // Run k8s master at *01* to simplify namespaces creation
-    salt.enforceStateWithExclude(master, "I@kubernetes:master and *01* ${extra_tgt}", "kubernetes.master", "kubernetes.master.setup")
+    first_target = salt.getFirstMinion(master, "I@kubernetes:master ${extra_tgt}")
+    salt.enforceStateWithExclude(master, "${first_target} ${extra_tgt}", "kubernetes.master", "kubernetes.master.setup")
 
     // Run k8s without master.setup
     salt.enforceStateWithExclude(master, "I@kubernetes:master ${extra_tgt}", "kubernetes", "kubernetes.master.setup")
 
     // Run k8s master setup
-    salt.enforceState(master, "I@kubernetes:master and *01* ${extra_tgt}", 'kubernetes.master.setup')
+    first_target = salt.getFirstMinion(master, "I@kubernetes:master ${extra_tgt}")
+    salt.enforceState(master, "${first_target} ${extra_tgt}", 'kubernetes.master.setup')
 
     // Restart kubelet
-    salt.runSaltProcessStep(master, "I@kubernetes:pool ${extra_tgt}", 'service.restart', ['kubelet'])
+    salt.runSaltProcessStep(master, "I@kubernetes:master ${extra_tgt}", 'service.restart', ['kubelet'])
 }
 
 
@@ -669,23 +704,24 @@ def installKubernetesCompute(master, extra_tgt = '') {
     salt.fullRefresh(master, "*")
 
     // Bootstrap all nodes
-    salt.enforceState(master, "I@kubernetes:pool ${extra_tgt}", 'linux')
-    salt.enforceState(master, "I@kubernetes:pool ${extra_tgt}", 'salt.minion')
-    salt.enforceState(master, "I@kubernetes:pool ${extra_tgt}", ['openssh', 'ntp'])
+    salt.enforceState(master, "I@kubernetes:pool and not I@kubernetes:master ${extra_tgt}", 'linux')
+    salt.enforceState(master, "I@kubernetes:pool and not I@kubernetes:master ${extra_tgt}", 'salt.minion')
+    salt.enforceState(master, "I@kubernetes:pool and not I@kubernetes:master ${extra_tgt}", ['openssh', 'ntp'])
 
     // Create and distribute SSL certificates for services using salt state
-    salt.enforceState(master, "I@kubernetes:pool ${extra_tgt}", 'salt.minion.cert')
+    salt.enforceState(master, "I@kubernetes:pool and not I@kubernetes:master ${extra_tgt}", 'salt.minion.cert')
 
     // Install docker
     salt.enforceState(master, "I@docker:host ${extra_tgt}", 'docker.host')
 
     // Install Kubernetes and Calico
-    salt.enforceState(master, "I@kubernetes:pool ${extra_tgt}", 'kubernetes.pool')
+    salt.enforceState(master, "I@kubernetes:pool and not I@kubernetes:master ${extra_tgt}", 'kubernetes.pool')
 
     // Install Tiller and all configured releases
     if (salt.testTarget(master, "I@helm:client ${extra_tgt}")) {
         salt.enforceState(master, "I@helm:client ${extra_tgt}", 'helm')
     }
+    salt.runSaltProcessStep(master, "I@kubernetes:pool and not I@kubernetes:master ${extra_tgt}", 'service.restart', ['kubelet'])
 }
 
 
@@ -693,16 +729,20 @@ def installDockerSwarm(master, extra_tgt = '') {
     def salt = new com.mirantis.mk.Salt()
 
     //Install and Configure Docker
-    salt.enforceState(master, "I@docker:swarm ${extra_tgt}", 'docker.host')
-    salt.enforceState(master, "I@docker:swarm:role:master ${extra_tgt}", 'docker.swarm')
-    salt.enforceState(master, "I@docker:swarm ${extra_tgt}", 'salt.minion.grains')
-    salt.runSaltProcessStep(master, "I@docker:swarm ${extra_tgt}", 'mine.update')
-    salt.runSaltProcessStep(master, "I@docker:swarm ${extra_tgt}", 'saltutil.refresh_modules')
-    sleep(5)
-    salt.enforceState(master, "I@docker:swarm:role:master ${extra_tgt}", 'docker.swarm')
-    salt.enforceState(master, "I@docker:swarm:role:manager ${extra_tgt}", 'docker.swarm')
-    sleep(10)
-    salt.cmdRun(master, "I@docker:swarm:role:master ${extra_tgt}", 'docker node ls')
+    if (salt.testTarget(master, "I@docker:swarm ${extra_tgt}")) {
+        salt.enforceState(master, "I@docker:swarm ${extra_tgt}", 'docker.host')
+        salt.enforceState(master, "I@docker:swarm:role:master ${extra_tgt}", 'docker.swarm')
+        salt.enforceState(master, "I@docker:swarm ${extra_tgt}", 'salt.minion.grains')
+        salt.runSaltProcessStep(master, "I@docker:swarm ${extra_tgt}", 'mine.update')
+        salt.runSaltProcessStep(master, "I@docker:swarm ${extra_tgt}", 'saltutil.refresh_modules')
+        sleep(5)
+        salt.enforceState(master, "I@docker:swarm:role:master ${extra_tgt}", 'docker.swarm')
+        if (salt.testTarget(master, "I@docker:swarm:role:manager ${extra_tgt}")){
+            salt.enforceState(master, "I@docker:swarm:role:manager ${extra_tgt}", 'docker.swarm')
+        }
+        sleep(10)
+        salt.cmdRun(master, "I@docker:swarm:role:master ${extra_tgt}", 'docker node ls')
+    }
 }
 
 
@@ -802,6 +842,7 @@ def installStacklight(master, extra_tgt = '') {
     def salt = new com.mirantis.mk.Salt()
     def retries_wait = 20
     def retries = 15
+    def first_target
 
     // Install core services for K8S environments:
     // HAProxy, Nginx and lusterFS clients
@@ -830,7 +871,7 @@ def installStacklight(master, extra_tgt = '') {
     }
 
     //Install Telegraf
-    salt.enforceState(master, "I@telegraf:agent or I@telegraf:remote_agent ${extra_tgt}", 'telegraf')
+    salt.enforceState(master, "( I@telegraf:agent or I@telegraf:remote_agent ) ${extra_tgt}", 'telegraf')
 
     // Install Prometheus exporters
     if (salt.testTarget(master, "I@prometheus:exporters ${extra_tgt}")) {
@@ -838,11 +879,20 @@ def installStacklight(master, extra_tgt = '') {
     }
 
     //Install Elasticsearch and Kibana
-    salt.enforceState(master, "*01* and  I@elasticsearch:server ${extra_tgt}", 'elasticsearch.server')
-    salt.enforceState(master, "I@elasticsearch:server ${extra_tgt}", 'elasticsearch.server')
-    salt.enforceState(master, "*01* and I@kibana:server ${extra_tgt}", 'kibana.server')
-    salt.enforceState(master, "I@kibana:server ${extra_tgt}", 'kibana.server')
-
+    if (salt.testTarget(master, "I@elasticsearch:server:enabled:true ${extra_tgt}")) {
+        first_target = salt.getFirstMinion(master, "I@elasticsearch:server:enabled:true ${extra_tgt}")
+        salt.enforceState(master, "${first_target} ${extra_tgt}", 'elasticsearch.server')
+    }
+    if (salt.testTarget(master, "I@elasticsearch:server:enabled:true ${extra_tgt}")) {
+        salt.enforceState(master, "I@elasticsearch:server:enabled:true ${extra_tgt}", 'elasticsearch.server')
+    }
+    if (salt.testTarget(master, "I@kibana:server:enabled:true ${extra_tgt}")) {
+        first_target = salt.getFirstMinion(master, "I@kibana:server:enabled:true ${extra_tgt}")
+        salt.enforceState(master, "${first_target} ${extra_tgt}", 'kibana.server')
+    }
+    if (salt.testTarget(master, "I@kibana:server:enabled:true ${extra_tgt}")) {
+        salt.enforceState(master, "I@kibana:server:enabled:true ${extra_tgt}", 'kibana.server')
+    }
     // Check ES health cluster status
     def pillar = salt.getPillar(master, "I@elasticsearch:client ${extra_tgt}", 'elasticsearch:client:server:host')
     def elasticsearch_vip
@@ -873,7 +923,8 @@ def installStacklight(master, extra_tgt = '') {
 
     //Install InfluxDB
     if (salt.testTarget(master, "I@influxdb:server ${extra_tgt}")) {
-        salt.enforceState(master, "*01* and I@influxdb:server ${extra_tgt}", 'influxdb')
+        first_target = salt.getFirstMinion(master, "I@influxdb:server ${extra_tgt}")
+        salt.enforceState(master, "${first_target} ${extra_tgt}", 'influxdb')
         salt.enforceState(master, "I@influxdb:server ${extra_tgt}", 'influxdb')
     }
 
@@ -1011,7 +1062,7 @@ def installStacklightv1Client(master, extra_tgt = '') {
     sleep(5)
 
     // Update Heka
-    salt.enforceState(master, "I@heka:aggregator:enabled:True or I@heka:remote_collector:enabled:True ${extra_tgt}", 'heka')
+    salt.enforceState(master, "( I@heka:aggregator:enabled:True or I@heka:remote_collector:enabled:True ) ${extra_tgt}", 'heka')
 
     // Update collectd
     salt.enforceState(master, "I@collectd:remote_client:enabled:True ${extra_tgt}", 'collectd')
@@ -1138,10 +1189,10 @@ def installCephMon(master, target="I@ceph:mon", extra_tgt = '') {
     salt.enforceState(master, "I@ceph:common ${extra_tgt}", 'salt.minion.grains')
 
     // generate keyrings
-    if (salt.testTarget(master, "I@ceph:mon:keyring:mon ${extra_tgt} or I@ceph:common:keyring:admin ${extra_tgt}")) {
-        salt.enforceState(master, "I@ceph:mon:keyring:mon ${extra_tgt} or I@ceph:common:keyring:admin ${extra_tgt}", 'ceph.mon')
+    if (salt.testTarget(master, "( I@ceph:mon:keyring:mon or I@ceph:common:keyring:admin ) ${extra_tgt}")) {
+        salt.enforceState(master, "( I@ceph:mon:keyring:mon or I@ceph:common:keyring:admin ) ${extra_tgt}", 'ceph.mon')
         salt.runSaltProcessStep(master, "I@ceph:mon ${extra_tgt}", 'saltutil.sync_grains')
-        salt.runSaltProcessStep(master, "I@ceph:mon:keyring:mon ${extra_tgt} or I@ceph:common:keyring:admin ${extra_tgt}", 'mine.update')
+        salt.runSaltProcessStep(master, "( I@ceph:mon:keyring:mon or I@ceph:common:keyring:admin ) ${extra_tgt}", 'mine.update')
         sleep(5)
     }
     // install Ceph Mons
@@ -1201,16 +1252,16 @@ def connectCeph(master, extra_tgt = '') {
         salt.enforceState(master, "I@ceph:common and I@nova:compute ${extra_tgt}", ['nova'])
         salt.runSaltProcessStep(master, "I@ceph:common and I@nova:compute ${extra_tgt}", 'service.restart', ['nova-compute'])
     }
+    if (salt.testTarget(master, "I@ceph:common and I@gnocchi:server ${extra_tgt}")) {
+        salt.enforceState(master, "I@ceph:common and I@gnocchi:server ${extra_tgt}", ['ceph.common', 'ceph.setup.keyring'])
+        salt.enforceState(master, "I@ceph:common and I@gnocchi:server:role:primary ${extra_tgt}", 'gnocchi.server')
+        salt.enforceState(master, "I@ceph:common and I@gnocchi:server ${extra_tgt}", 'gnocchi.server')
+    }
 }
 
 def installOssInfra(master, extra_tgt = '') {
   def common = new com.mirantis.mk.Common()
   def salt = new com.mirantis.mk.Salt()
-
-  if (!common.checkContains('STACK_INSTALL', 'k8s') || !common.checkContains('STACK_INSTALL', 'openstack')) {
-    def orchestrate = new com.mirantis.mk.Orchestrate()
-    orchestrate.installInfra(master)
-  }
 
   if (salt.testTarget(master, "I@devops_portal:config ${extra_tgt}")) {
     salt.enforceState(master, "I@devops_portal:config ${extra_tgt}", 'devops_portal.config')
@@ -1281,22 +1332,22 @@ def installOss(master, extra_tgt = '') {
  * @param tgt Target
  * @param conf Configuration pattern
  */
- def OrchestrateApplications(master, tgt, conf) {
+def OrchestrateApplications(master, tgt, conf) {
     def salt = new com.mirantis.mk.Salt()
     def common = new com.mirantis.mk.Common()
     def _orch = salt.getConfig(master, tgt, conf)
-      if ( !_orch['return'][0].values()[0].isEmpty() ) {
-        Map<String,Integer> _orch_app = [:]
-          for (k in _orch['return'][0].values()[0].keySet()) {
-            _orch_app[k] = _orch['return'][0].values()[0][k].values()[0].toInteger()
-          }
-    def _orch_app_sorted = common.SortMapByValueAsc(_orch_app)
-    common.infoMsg("Applications will be deployed in following order:"+_orch_app_sorted.keySet())
-    for (app in _orch_app_sorted.keySet()) {
-    salt.orchestrateSystem(master, ['expression': tgt, 'type': 'compound'], "${app}.orchestrate.deploy")
+    if ( !_orch['return'][0].values()[0].isEmpty() ) {
+      Map<String,Integer> _orch_app = [:]
+      for (k in _orch['return'][0].values()[0].keySet()) {
+        _orch_app[k] = _orch['return'][0].values()[0][k].values()[0].toInteger()
+      }
+      def _orch_app_sorted = common.SortMapByValueAsc(_orch_app)
+      common.infoMsg("Applications will be deployed in following order:"+_orch_app_sorted.keySet())
+      for (app in _orch_app_sorted.keySet()) {
+        salt.orchestrateSystem(master, ['expression': tgt, 'type': 'compound'], "${app}.orchestrate.deploy")
+      }
     }
-      }
-      else {
-            common.infoMsg("No applications found for orchestration")
-      }
+    else {
+      common.infoMsg("No applications found for orchestration")
+    }
 }
