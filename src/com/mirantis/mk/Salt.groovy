@@ -189,9 +189,10 @@ def enforceStateWithTest(saltId, target, state, testTargetMatcher = "", output =
         return enforceState(saltId, target, state, output, failOnError, batch, false, read_timeout, retries, queue, saltArgs)
     } else {
         if (!optional) {
-                throw new Exception("No Minions matched the target matcher: ${testTargetMatcher}.")
+                common.infoMsg("No Minions matched the target matcher: ${testTargetMatcher}, and 'optional' param was set to false. - This may signify missing pillar definition!!")
+//              throw new Exception("No Minions matched the target matcher: ${testTargetMatcher}.") TODO: Change the infoMsg to Error once the methods are changed to Use named params and optional param will be set globally
             } else {
-                common.infoMsg("No Minions matched the target given, but 'optional' param was set to true - Pipeline continues. ")
+                common.infoMsg("No Minions matched the target matcher: ${testTargetMatcher}, but 'optional' param was set to true - Pipeline continues. ")
             }
     }
 }
@@ -1003,8 +1004,8 @@ def printSaltCommandResult(result) {
  * @param file      File path to read (/etc/hosts for example)
  */
 
-def getFileContent(saltId, target, file) {
-    result = cmdRun(saltId, target, "cat ${file}")
+def getFileContent(saltId, target, file, checkResponse = true, batch=null, output = true, saltArgs = []) {
+    result = cmdRun(saltId, target, "cat ${file}", checkResponse, batch, output, saltArgs)
     return result['return'][0].values()[0].replaceAll('Salt command execution success','')
 }
 

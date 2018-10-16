@@ -619,7 +619,7 @@ def diffCheckMultidir(diffData) {
  **/
 
 def comparePillars(compRoot, b_url, grepOpts) {
-    common = new com.mirantis.mk.Common()
+
     // Some global constants. Don't change\move them!
     keyNew = 'new'
     keyRemoved = 'removed'
@@ -643,7 +643,7 @@ def comparePillars(compRoot, b_url, grepOpts) {
                 returnStatus: true
             )
             if (grep_status == 1) {
-                common.warningMsg("Grep regexp ${grepOpts} removed all diff!")
+                warningMsg("Grep regexp ${grepOpts} removed all diff!")
                 diff_status = 0
             }
         }
@@ -654,14 +654,14 @@ def comparePillars(compRoot, b_url, grepOpts) {
         // Analyse output file and prepare array with results
         String data_ = readFile file: "${compRoot}/pillar.diff"
         def diff_list = diffCheckMultidir(data_.split("\\r?\\n"))
-        common.infoMsg(diff_list)
+        infoMsg(diff_list)
         dir(compRoot) {
             if (diff_list[keyDiff].size() > 0) {
                 if (!fileExists('diff')) {
                     sh('mkdir -p diff')
                 }
                 description += '<b>CHANGED</b><ul>'
-                common.infoMsg('Changed items:')
+                infoMsg('Changed items:')
                 def stepsForParallel = [:]
                 stepsForParallel.failFast = true
                 diff_list[keyDiff].each {
@@ -710,7 +710,7 @@ def comparePillars(compRoot, b_url, grepOpts) {
         }
         return description.toString()
     } else {
-        return 'No job changes'
+        return '<b>No job changes</b>'
     }
 }
 
@@ -830,10 +830,101 @@ def checkRemoteBinary(LinkedHashMap config, List extraScmExtensions = []) {
 
     if (config.get('verify', true)) {
         MirrorRootStatus = sh(script: "wget  --auth-no-challenge --spider ${res['linux_system_repo_url']} 2>/dev/null", returnStatus: true)
-        if (MirrorRootStatus != '0') {
+        if (MirrorRootStatus != 0) {
             common.warningMsg("Resource: ${res['linux_system_repo_url']} not exist")
             res['linux_system_repo_url'] = false
         }
     }
     return res
+}
+
+/**
+ *  Workaround to update env properties, like GERRIT_* vars,
+ *  which should be passed from upstream job to downstream.
+ *  Will not fail entire job in case any issues.
+ *  @param envVar - EnvActionImpl env job
+ *  @param extraVars - Multiline YAML text with extra vars
+ */
+def mergeEnv(envVar, extraVars) {
+    def common = new com.mirantis.mk.Common()
+    try {
+        def extraParams = readYaml text: extraVars
+        for(String key in extraParams.keySet()) {
+            envVar[key] = extraParams[key]
+            common.warningMsg("Parameter ${key} is updated from EXTRA vars.")
+        }
+    } catch (Exception e) {
+        common.errorMsg("Can't update env parameteres, because: ${e.toString()}")
+    }
+}
+
+/**
+ * Wrapper around parallel pipeline function
+ * with ability to restrict number of parallel threads
+ * running simultaneously
+ *
+ * @param branches - Map with Clousers to be executed
+ * @param maxParallelJob - Integer number of parallel threads allowed
+ *                         to run simultaneously
+ */
+def runParallel(branches, maxParallelJob = 10) {
+    def runningSteps = 0
+    branches.each { branchName, branchBody ->
+        if (branchBody instanceof Closure) {
+            branches[branchName] = {
+                while (!(runningSteps < maxParallelJob)) {
+                    continue
+                }
+                runningSteps += 1
+                branchBody.call()
+                runningSteps -= 1
+            }
+        }
+    }
+    if (branches) {
+        parallel branches
+    }
+}
+
+/**
+ * Ugly processing basic funcs with /etc/apt
+ * @param configYaml
+ * Example :
+ configYaml = '''
+ ---
+ aprConfD: |-
+    APT::Get::AllowUnauthenticated 'true';
+ repo:
+    mcp_saltstack:
+        source: "deb [arch=amd64] http://mirror.mirantis.com/nightly/saltstack-2017.7/xenial xenial main"
+        pinning: |-
+            Package: libsodium18
+            Pin: release o=SaltStack
+            Pin-Priority: 50
+        repo_key: "http://mirror.mirantis.com/public.gpg"
+ '''
+ *
+ */
+
+def debianExtraRepos(configYaml) {
+    def config = readYaml text: configYaml
+    if (config.get('repo', false)) {
+        for (String repo in config['repo'].keySet()) {
+            source = config['repo'][repo]['source']
+            warningMsg("Write ${source} >  /etc/apt/sources.list.d/${repo}.list")
+            sh("echo '${source}' > /etc/apt/sources.list.d/${repo}.list")
+            if (config['repo'][repo].containsKey('repo_key')) {
+                key = config['repo'][repo]['repo_key']
+                sh("wget -O - '${key}' | apt-key add -")
+            }
+            // TODO implement pining
+        }
+    }
+    if (config.get('aprConfD', false)) {
+        for (String pref in config['aprConfD'].tokenize('\n')) {
+            warningMsg("Adding ${pref} => /etc/apt/apt.conf.d/99setupAndTestNode")
+            sh("echo '${pref}' >> /etc/apt/apt.conf.d/99setupAndTestNode")
+        }
+        sh('cat /etc/apt/apt.conf.d/99setupAndTestNode')
+    }
 }
