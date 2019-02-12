@@ -31,7 +31,9 @@ def setupDockerAndTest(LinkedHashMap config) {
     def runFinally = config.get('runFinally', [:])
     def baseRepoPreConfig = config.get('baseRepoPreConfig', true)
     def dockerContainerName = config.get('dockerContainerName', defaultContainerName)
-    def dockerImageName = config.get('image', "mirantis/salt:saltstack-ubuntu-xenial-salt-2017.7")
+    //  def dockerImageName = config.get('image', "mirantis/salt:saltstack-ubuntu-xenial-salt-2017.7")
+    // FIXME /PROD-25244
+    def dockerImageName = config.get('image', "docker-dev-virtual.docker.mirantis.net/mirantis/salt:saltstack-ubuntu-xenial-salt-2017.7")
     def dockerMaxCpus = config.get('dockerMaxCpus', 4)
     def dockerExtraOpts = config.get('dockerExtraOpts', [])
     def envOpts = config.get('envOpts', [])
@@ -43,24 +45,26 @@ def setupDockerAndTest(LinkedHashMap config) {
         "--name=${dockerContainerName}",
         "--cpus=${dockerMaxCpus}"
     ]
-    // extra repo on mirror.mirantis.net, which is not supported before 2018.11.0 release
-    def extraRepoSource = "deb [arch=amd64] http://mirror.mirantis.com/${distribRevision}/extra/xenial xenial main"
-    try {
-        def releaseNaming = 'yyyy.MM.dd'
-        def repoDateUsed = new Date().parse(releaseNaming, distribRevision)
-        def extraAvailableFrom = new Date().parse(releaseNaming, '2018.11.0')
-        if (repoDateUsed < extraAvailableFrom) {
-          extraRepoSource = "deb http://apt.mcp.mirantis.net:8085/xenial ${distribRevision} extra"
-        }
-    } catch (Exception e) {
-        common.warningMsg(e)
-        if ( !(distribRevision in [ 'nightly', 'proposed', 'testing' ] )) {
-            extraRepoSource = "deb http://apt.mcp.mirantis.net:8085/xenial ${distribRevision} extra"
-        }
-    }
-
     def dockerOptsFinal = (dockerBaseOpts + dockerExtraOpts).join(' ')
-    def defaultExtraReposYaml = """
+    def extraReposConfig = null
+    if (baseRepoPreConfig) {
+        // extra repo on mirror.mirantis.net, which is not supported before 2018.11.0 release
+        def extraRepoSource = "deb [arch=amd64] http://mirror.mirantis.com/${distribRevision}/extra/xenial xenial main"
+        try {
+            def releaseNaming = 'yyyy.MM.dd'
+            def repoDateUsed = new Date().parse(releaseNaming, distribRevision)
+            def extraAvailableFrom = new Date().parse(releaseNaming, '2018.11.0')
+            if (repoDateUsed < extraAvailableFrom) {
+                extraRepoSource = "deb http://apt.mcp.mirantis.net/xenial ${distribRevision} extra"
+            }
+        } catch (Exception e) {
+            common.warningMsg(e)
+            if (!(distribRevision in ['nightly', 'proposed', 'testing'])) {
+                extraRepoSource = "deb [arch=amd64] http://apt.mcp.mirantis.net/xenial ${distribRevision} extra"
+            }
+        }
+
+        def defaultExtraReposYaml = """
 ---
 aprConfD: |-
   APT::Get::AllowUnauthenticated 'true';
@@ -69,19 +73,18 @@ aprConfD: |-
 repo:
   mcp_saltstack:
     source: "deb [arch=amd64] http://mirror.mirantis.com/${distribRevision}/saltstack-2017.7/xenial xenial main"
-    pinning: |-
-        Package: libsodium18
-        Pin: release o=SaltStack
-        Pin-Priority: 50
-
-        Package: *
-        Pin: release o=SaltStack
-        Pin-Priority: 1100
+    pin:
+      - package: "libsodium18"
+        pin: "release o=SaltStack"
+        priority: 50
+      - package: "*"
+        pin: "release o=SaltStack"
+        priority: "1100"
   mcp_extra:
     source: "${extraRepoSource}"
   mcp_saltformulas:
-    source: "deb http://apt.mcp.mirantis.net:8085/xenial ${distribRevision} salt salt-latest"
-    repo_key: "http://apt.mcp.mirantis.net:8085/public.gpg"
+    source:   "deb [arch=amd64]  http://mirror.mirantis.com/${distribRevision}/salt-formulas/xenial xenial main"
+    repo_key: "http://mirror.mirantis.com/${distribRevision}/salt-formulas/xenial/archive-salt-formulas.key"
   ubuntu:
     source: "deb [arch=amd64] http://mirror.mirantis.com/${distribRevision}/ubuntu xenial main restricted universe"
   ubuntu-upd:
@@ -89,8 +92,17 @@ repo:
   ubuntu-sec:
     source: "deb [arch=amd64] http://mirror.mirantis.com/${distribRevision}/ubuntu xenial-security main restricted universe"
 """
+        // override for now
+        def extraRepoMergeStrategy = config.get('extraRepoMergeStrategy', 'override')
+        def extraRepos = config.get('extraRepos', [:])
+        def defaultRepos = readYaml text: defaultExtraReposYaml
+        if (extraRepoMergeStrategy == 'merge') {
+            extraReposConfig = common.mergeMaps(defaultRepos, extraRepos)
+        } else {
+            extraReposConfig = extraRepos ? extraRepos : defaultRepos
+        }
+    }
     def img = docker.image(dockerImageName)
-    def extraReposYaml = config.get('extraReposYaml', defaultExtraReposYaml)
 
     img.pull()
 
@@ -107,8 +119,9 @@ repo:
                             echo "Installing extra-deb dependencies inside docker:"
                             echo > /etc/apt/sources.list
                             rm -vf /etc/apt/sources.list.d/* || true
+                            rm -vf /etc/apt/preferences.d/* || true
                         """)
-                        common.debianExtraRepos(extraReposYaml)
+                        common.debianExtraRepos(extraReposConfig)
                         sh('''#!/bin/bash -xe
                             apt-get update
                             apt-get install -y python-netaddr
@@ -182,16 +195,16 @@ def compareReclassVersions(config) {
     sh "mkdir -p ${env.WORKSPACE}/old ${env.WORKSPACE}/new"
     def configRun = [
         'distribRevision': distribRevision,
-        'dockerExtraOpts' : [
+        'dockerExtraOpts': [
             "-v /srv/salt/reclass:/srv/salt/reclass:ro",
             "-v /etc/salt:/etc/salt:ro",
             "-v /usr/share/salt-formulas/:/usr/share/salt-formulas/:ro"
         ],
-        'envOpts'         : [
+        'envOpts'        : [
             "WORKSPACE=${env.WORKSPACE}",
             "NODES_LIST=${targetNodes.join(' ')}"
         ],
-        'runCommands'     : [
+        'runCommands'    : [
             '001_Update_Reclass_package'    : {
                 sh('apt-get update && apt-get install -y reclass')
             },
@@ -254,13 +267,11 @@ def compareReclassVersions(config) {
 
 def testNode(LinkedHashMap config) {
     def common = new com.mirantis.mk.Common()
-    def result = ''
     def dockerHostname = config.get('dockerHostname')
     def reclassEnv = config.get('reclassEnv')
     def clusterName = config.get('clusterName', "")
     def formulasSource = config.get('formulasSource', 'pkg')
     def extraFormulas = config.get('extraFormulas', 'linux')
-    def reclassVersion = config.get('reclassVersion', 'master')
     def ignoreClassNotfound = config.get('ignoreClassNotfound', false)
     def aptRepoUrl = config.get('aptRepoUrl', "")
     def aptRepoGPG = config.get('aptRepoGPG', "")
@@ -269,21 +280,26 @@ def testNode(LinkedHashMap config) {
         "RECLASS_ENV=${reclassEnv}", "SALT_STOPSTART_WAIT=5",
         "MASTER_HOSTNAME=${dockerHostname}", "CLUSTER_NAME=${clusterName}",
         "MINION_ID=${dockerHostname}", "FORMULAS_SOURCE=${formulasSource}",
-        "EXTRA_FORMULAS=${extraFormulas}", "RECLASS_VERSION=${reclassVersion}",
+        "EXTRA_FORMULAS=${extraFormulas}", "EXTRA_FORMULAS_PKG_ALL=true",
         "RECLASS_IGNORE_CLASS_NOTFOUND=${ignoreClassNotfound}", "DEBUG=1",
-        "APT_REPOSITORY=${aptRepoUrl}", "APT_REPOSITORY_GPG=${aptRepoGPG}",
-        "EXTRA_FORMULAS_PKG_ALL=true"
+        "APT_REPOSITORY=${aptRepoUrl}", "APT_REPOSITORY_GPG=${aptRepoGPG}"
     ]
 
     config['runCommands'] = [
         '001_Clone_salt_formulas_scripts': {
-            sh(script: 'git clone https://github.com/salt-formulas/salt-formulas-scripts /srv/salt/scripts', returnStdout: true)
+            sh(script: 'git clone http://gerrit.mcp.mirantis.com/salt-formulas/salt-formulas-scripts /srv/salt/scripts', returnStdout: true)
         },
 
         '002_Prepare_something'          : {
-            sh('''rsync -ah ${RECLASS_ENV}/* /srv/salt/reclass && echo '127.0.1.2  salt' >> /etc/hosts
-              cd /srv/salt && find . -type f \\( -name '*.yml' -or -name '*.sh' \\) -exec sed -i 's/apt-mk.mirantis.com/apt.mirantis.net:8085/g' {} \\;
-              cd /srv/salt && find . -type f \\( -name '*.yml' -or -name '*.sh' \\) -exec sed -i 's/apt.mirantis.com/apt.mirantis.net:8085/g' {} \\;
+            sh('''#!/bin/bash -x
+              rsync -ah ${RECLASS_ENV}/* /srv/salt/reclass && echo '127.0.1.2  salt' >> /etc/hosts
+              if [ -f '/srv/salt/reclass/salt_master_pillar.asc' ] ; then
+                mkdir -p /etc/salt/gpgkeys
+                chmod 700 /etc/salt/gpgkeys
+                GNUPGHOME=/etc/salt/gpgkeys gpg --import /srv/salt/reclass/salt_master_pillar.asc
+              fi
+              cd /srv/salt && find . -type f \\( -name '*.yml' -or -name '*.sh' \\) -exec sed -i 's/apt-mk.mirantis.com/apt.mcp.mirantis.net/g' {} \\;
+              cd /srv/salt && find . -type f \\( -name '*.yml' -or -name '*.sh' \\) -exec sed -i 's/apt.mirantis.com/apt.mcp.mirantis.net/g' {} \\;
             ''')
         },
 
@@ -406,8 +422,8 @@ def setupAndTestNode(masterName, clusterName, extraFormulas = '*', testDir, form
             """)
                     sh(script: "git clone https://github.com/salt-formulas/salt-formulas-scripts /srv/salt/scripts", returnStdout: true)
                     sh("""rsync -ah ${testDir}/* /srv/salt/reclass && echo '127.0.1.2  salt' >> /etc/hosts
-            cd /srv/salt && find . -type f \\( -name '*.yml' -or -name '*.sh' \\) -exec sed -i 's/apt-mk.mirantis.com/apt.mirantis.net:8085/g' {} \\;
-            cd /srv/salt && find . -type f \\( -name '*.yml' -or -name '*.sh' \\) -exec sed -i 's/apt.mirantis.com/apt.mirantis.net:8085/g' {} \\;
+            cd /srv/salt && find . -type f \\( -name '*.yml' -or -name '*.sh' \\) -exec sed -i 's/apt-mk.mirantis.com/apt.mcp.mirantis.net/g' {} \\;
+            cd /srv/salt && find . -type f \\( -name '*.yml' -or -name '*.sh' \\) -exec sed -i 's/apt.mirantis.com/apt.mcp.mirantis.net/g' {} \\;
             """)
                     // FIXME: should be changed to use reclass from mcp_extra_nigtly?
                     sh("""for s in \$(python -c \"import site; print(' '.join(site.getsitepackages()))\"); do

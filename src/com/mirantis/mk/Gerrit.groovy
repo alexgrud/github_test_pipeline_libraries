@@ -201,7 +201,8 @@ def getGerritTriggeredBuilds(allBuilds, gerritChange, excludePatchset = null){
     return allBuilds.findAll{job ->
         def cause = job.causes[0]
         if(cause instanceof GerritCause &&
-           cause.getEvent() instanceof com.sonymobile.tools.gerrit.gerritevents.dto.events.PatchsetCreated){
+           (cause.getEvent() instanceof com.sonymobile.tools.gerrit.gerritevents.dto.events.PatchsetCreated ||
+            cause.getEvent() instanceof com.sonymobile.tools.gerrit.gerritevents.dto.events.CommentAdded)) {
             if(excludePatchset == null || excludePatchset == 0){
                 return cause.event.change.number.equals(String.valueOf(gerritChange))
             }else{
@@ -253,4 +254,61 @@ def _getInvalidGerritParams(LinkedHashMap config){
     def missedParams = requiredParams - config.keySet()
     def badParams = config.subMap(requiredParams).findAll{it.value in [null, '']}.keySet()
     return badParams + missedParams
+}
+
+/**
+ * Post Gerrit comment from CI user
+ *
+ * @param config map which contains next params:
+ *  gerritName - gerrit user name (usually GERRIT_NAME property)
+ *  gerritHost - gerrit host (usually GERRIT_HOST property)
+ *  gerritChangeNumber - gerrit change number (usually GERRIT_CHANGE_NUMBER property)
+ *  gerritPatchSetNumber - gerrit patch set number (usually GERRIT_PATCHSET_NUMBER property)
+ *  message - message to send to gerrit review patch
+ *  credentialsId - jenkins credentials id for gerrit
+ */
+def postGerritComment(LinkedHashMap config) {
+    def common = new com.mirantis.mk.Common()
+    def ssh = new com.mirantis.mk.Ssh()
+    String gerritName = config.get('gerritName')
+    String gerritHost = config.get('gerritHost')
+    String gerritChangeNumber = config.get('gerritChangeNumber')
+    String gerritPatchSetNumber = config.get('gerritPatchSetNumber')
+    String message = config.get('message')
+    String credentialsId = config.get('credentialsId')
+
+    ssh.prepareSshAgentKey(credentialsId)
+    ssh.ensureKnownHosts(gerritHost)
+    ssh.agentSh(String.format("ssh -p 29418 %s@%s gerrit review %s,%s -m \"'%s'\" --code-review 0", gerritName, gerritHost, gerritChangeNumber, gerritPatchSetNumber, message))
+}
+
+/**
+ * Return map of dependent patches info for current patch set
+ * based on commit message hints: Depends-On: https://gerrit_address/_CHANGE_NUMBER_
+ * @param changeInfo Map Info about current patch set, such as:
+ *   gerritName Gerrit user name (usually GERRIT_NAME property)
+ *   gerritHost Gerrit host (usually GERRIT_HOST property)
+ *   gerritChangeNumber Gerrit change number (usually GERRIT_CHANGE_NUMBER property)
+ *   credentialsId Jenkins credentials id for gerrit
+ * @return map of dependent patches info
+ */
+LinkedHashMap getDependentPatches(LinkedHashMap changeInfo) {
+    def dependentPatches = [:]
+    def currentChange = getGerritChange(changeInfo.gerritName, changeInfo.gerritHost, changeInfo.gerritChangeNumber, changeInfo.credentialsId, true)
+    def dependentCommits = currentChange.commitMessage.tokenize('\n').findAll { it  ==~ /Depends-On: \b[^ ]+\b(\/)?/  }
+    if (dependentCommits) {
+        dependentCommits.each { commit ->
+            def patchLink = commit.tokenize(' ')[1]
+            def changeNumber = patchLink.tokenize('/')[-1].trim()
+            def dependentCommit = getGerritChange(changeInfo.gerritName, changeInfo.gerritHost, changeNumber, changeInfo.credentialsId, true)
+            if (dependentCommit.status == "NEW") {
+                dependentPatches[dependentCommit.project] = [
+                    'number': dependentCommit.number,
+                    'ref': dependentCommit.currentPatchSet.ref,
+                    'branch': dependentCommit.branch,
+                ]
+            }
+        }
+    }
+    return dependentPatches
 }

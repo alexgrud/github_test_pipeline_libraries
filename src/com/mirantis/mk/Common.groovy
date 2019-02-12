@@ -443,6 +443,37 @@ def parseJSON(jsonString) {
 }
 
 /**
+ *
+ * Deep merge of  Map items. Merges variable number of maps in to onto.
+ *   Using the following rules:
+ *     - Lists are appended
+ *     - Maps are updated
+ *     - other object types are replaced.
+ *
+ *
+ * @param onto Map object to merge in
+ * @param overrides Map objects to merge to onto
+*/
+def mergeMaps(Map onto, Map... overrides){
+    if (!overrides){
+        return onto
+    }
+    else if (overrides.length == 1) {
+        overrides[0]?.each { k, v ->
+            if (v in Map && onto[k] in Map){
+                mergeMaps((Map) onto[k], (Map) v)
+            } else if (v in List) {
+                onto[k] += v
+            } else {
+                onto[k] = v
+            }
+        }
+        return onto
+    }
+    return overrides.inject(onto, { acc, override -> mergeMaps(acc, override ?: [:]) })
+}
+
+/**
  * Test pipeline input parameter existence and validity (not null and not empty string)
  * @param paramName input parameter name (usually uppercase)
   */
@@ -494,6 +525,9 @@ def shCmdStatus(cmd) {
 /**
  * Retry commands passed to body
  *
+ * Don't use common.retry method for retrying salt.enforceState method. Use retries parameter
+ * built-in the salt.enforceState method instead to ensure correct functionality.
+ *
  * @param times Number of retries
  * @param delay Delay between retries (in seconds)
  * @param body Commands to be in retry block
@@ -503,15 +537,14 @@ def shCmdStatus(cmd) {
 
 def retry(int times = 5, int delay = 0, Closure body) {
     int retries = 0
-    def exceptions = []
     while (retries++ < times) {
         try {
             return body.call()
         } catch (e) {
+            errorMsg(e.toString())
             sleep(delay)
         }
     }
-    currentBuild.result = "FAILURE"
     throw new Exception("Failed after $times retries")
 }
 
@@ -797,8 +830,8 @@ def stageWrapper(stageMap, currentStage, target, interactive = true, Closure bod
         input message: getColorizedString("We are going to execute stage \'${currentStage}\' on the following target ${target}.\nPlease review stage information above.", "yellow")
       }
       try {
-        return body.call()
         stageMap[currentStage]['Status'] = "SUCCESS"
+        return body.call()
       } catch (Exception err) {
         def msg = "Stage ${currentStage} failed with the following exception:\n${err}"
         print getColorizedString(msg, "yellow")
@@ -818,21 +851,28 @@ def stageWrapper(stageMap, currentStage, target, interactive = true, Closure bod
  *  Ugly transition solution for internal tests.
  *  1) Check input => transform to static result, based on runtime and input
  *  2) Check remote-binary repo for exact resource
- */
+ *  Return: changes each linux_system_* cto false, in case broken url in some of them
+  */
 
 def checkRemoteBinary(LinkedHashMap config, List extraScmExtensions = []) {
     def common = new com.mirantis.mk.Common()
-    res = [:]
+    def res = [:]
     res['MirrorRoot'] = config.get('globalMirrorRoot', env["BIN_MIRROR_ROOT"] ? env["BIN_MIRROR_ROOT"] : "http://mirror.mirantis.com/")
     // Reclass-like format's. To make life eazy!
-    res['apt_mk_version'] = config.get('apt_mk_version', env["BIN_APT_MK_VERSION"] ? env["BIN_APT_MK_VERSION"] : 'nightly')
-    res['linux_system_repo_url'] = config.get('linux_system_repo_url', env["BIN_linux_system_repo_url"] ? env["BIN_linux_system_repo_url"] : "${res['MirrorRoot']}/${res['apt_mk_version']}/")
+    res['mcp_version'] = config.get('mcp_version', env["BIN_APT_MCP_VERSION"] ? env["BIN_APT_MCP_VERSION"] : 'nightly')
+    res['linux_system_repo_url'] = config.get('linux_system_repo_url', env['BIN_linux_system_repo_url'] ? env['BIN_linux_system_repo_url'] : "${res['MirrorRoot']}/${res['mcp_version']}/")
+    res['linux_system_repo_ubuntu_url'] = config.get('linux_system_repo_ubuntu_url', env['BIN_linux_system_repo_ubuntu_url'] ? env['BIN_linux_system_repo_ubuntu_url'] : "${res['MirrorRoot']}/${res['mcp_version']}/ubuntu/")
+    res['linux_system_repo_mcp_salt_url'] = config.get('linux_system_repo_mcp_salt_url', env['BIN_linux_system_repo_mcp_salt_url'] ? env['BIN_linux_system_repo_mcp_salt_url'] : "${res['MirrorRoot']}/${res['mcp_version']}/salt-formulas/")
 
     if (config.get('verify', true)) {
-        MirrorRootStatus = sh(script: "wget  --auth-no-challenge --spider ${res['linux_system_repo_url']} 2>/dev/null", returnStatus: true)
-        if (MirrorRootStatus != 0) {
-            common.warningMsg("Resource: ${res['linux_system_repo_url']} not exist")
-            res['linux_system_repo_url'] = false
+        res.each { key, val ->
+            if (key.toString().startsWith('linux_system_repo')) {
+                def MirrorRootStatus = sh(script: "wget  --auth-no-challenge --spider ${val} 2>/dev/null", returnStatus: true)
+                if (MirrorRootStatus != 0) {
+                    common.warningMsg("Resource: '${key}' at '${val}' not exist!")
+                    res[key] = false
+                }
+            }
         }
     }
     return res
@@ -888,26 +928,34 @@ def runParallel(branches, maxParallelJob = 10) {
 
 /**
  * Ugly processing basic funcs with /etc/apt
- * @param configYaml
+ * @param repoConfig YAML text or Map
  * Example :
- configYaml = '''
+ repoConfig = '''
  ---
  aprConfD: |-
-    APT::Get::AllowUnauthenticated 'true';
+   APT::Get::AllowUnauthenticated 'true';
  repo:
-    mcp_saltstack:
-        source: "deb [arch=amd64] http://mirror.mirantis.com/nightly/saltstack-2017.7/xenial xenial main"
-        pinning: |-
-            Package: libsodium18
-            Pin: release o=SaltStack
-            Pin-Priority: 50
-        repo_key: "http://mirror.mirantis.com/public.gpg"
+   mcp_saltstack:
+     source: "deb [arch=amd64] http://mirror.mirantis.com/nightly/saltstack-2017.7/xenial xenial main"
+     pin:
+       - package: "libsodium18"
+         pin: "release o=SaltStack"
+         priority: 50
+       - package: "*"
+         pin: "release o=SaltStack"
+         priority: "1100"
+     repo_key: "http://mirror.mirantis.com/public.gpg"
  '''
  *
  */
 
-def debianExtraRepos(configYaml) {
-    def config = readYaml text: configYaml
+def debianExtraRepos(repoConfig) {
+    def config = null
+    if (repoConfig instanceof Map) {
+        config = repoConfig
+    } else {
+        config = readYaml text: repoConfig
+    }
     if (config.get('repo', false)) {
         for (String repo in config['repo'].keySet()) {
             source = config['repo'][repo]['source']
@@ -917,7 +965,23 @@ def debianExtraRepos(configYaml) {
                 key = config['repo'][repo]['repo_key']
                 sh("wget -O - '${key}' | apt-key add -")
             }
-            // TODO implement pining
+            if (config['repo'][repo]['pin']) {
+                def repoPins = []
+                for (Map pin in config['repo'][repo]['pin']) {
+                    repoPins.add("Package: ${pin['package']}")
+                    repoPins.add("Pin: ${pin['pin']}")
+                    repoPins.add("Pin-Priority: ${pin['priority']}")
+                    // additional empty line between pins
+                    repoPins.add('\n')
+                }
+                if (repoPins) {
+                    repoPins.add(0, "### Extra ${repo} repo pin start ###")
+                    repoPins.add("### Extra ${repo} repo pin end ###")
+                    repoPinning = repoPins.join('\n')
+                    warningMsg("Adding pinning \n${repoPinning}\n => /etc/apt/preferences.d/${repo}")
+                    sh("echo '${repoPinning}' > /etc/apt/preferences.d/${repo}")
+                }
+            }
         }
     }
     if (config.get('aprConfD', false)) {
@@ -927,4 +991,15 @@ def debianExtraRepos(configYaml) {
         }
         sh('cat /etc/apt/apt.conf.d/99setupAndTestNode')
     }
+}
+
+/**
+ * Parse date from string
+ * @param String date - date to parse
+ * @param String format - date format in provided date string value
+ *
+ * return new Date() object
+ */
+Date parseDate(String date, String format) {
+    return Date.parse(format, date)
 }

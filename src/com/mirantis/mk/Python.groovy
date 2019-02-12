@@ -247,7 +247,8 @@ def setupCookiecutterVirtualenv(path) {
     requirements = [
         'cookiecutter',
         'jinja2==2.8.1',
-        'PyYAML==3.12'
+        'PyYAML==3.12',
+        'python-gnupg==0.4.3'
     ]
     setupVirtualenv(path, 'python2', requirements)
 }
@@ -261,12 +262,105 @@ def setupCookiecutterVirtualenv(path) {
  * @param templatePath path to cookiecutter template repo (optional)
  */
 def buildCookiecutterTemplate(template, context, outputDir = '.', path = null, templatePath = ".") {
+    def common = new com.mirantis.mk.Common()
     configFile = "default_config.yaml"
-    configString = "default_context:\n"
     writeFile file: configFile, text: context
-    command = ". ${path}/bin/activate; if [ -f ${templatePath}/generate.py ]; then python ${templatePath}/generate.py --config-file ${configFile} --template ${template} --output-dir ${outputDir}; else cookiecutter --config-file ${configFile} --output-dir ${outputDir} --overwrite-if-exists --verbose --no-input ${template}; fi"
-    output = sh (returnStdout: true, script: command)
-    echo("[Cookiecutter build] Output: ${output}")
+    if (fileExists(new File(templatePath, 'tox.ini').toString())) {
+        withEnv(["CONFIG_FILE=$configFile",
+                 "OUTPUT_DIR=$outputDir",
+                 "TEMPLATE=$template"
+        ]) {
+            output = sh(returnStdout: true, script: "tox -ve generate")
+        }
+    } else {
+        common.warningMsg('Old Cookiecutter env detected!')
+        command = ". ${path}/bin/activate; if [ -f ${templatePath}/generate.py ]; then python ${templatePath}/generate.py --config-file ${configFile} --template ${template} --output-dir ${outputDir}; else cookiecutter --config-file ${configFile} --output-dir ${outputDir} --overwrite-if-exists --verbose --no-input ${template}; fi"
+        output = sh(returnStdout: true, script: command)
+    }
+    common.infoMsg("[Cookiecutter build] Result: ${output}")
+}
+
+/**
+ *
+ * @param context - context template
+ * @param contextName - context template name
+ * @param saltMasterName - hostname of Salt Master node
+ * @param virtualenv - pyvenv with CC and dep's
+ * @param templateEnvDir - root of CookieCutter
+ * @return
+ */
+def generateModel(context, contextName, saltMasterName, virtualenv, modelEnv, templateEnvDir, multiModels = true) {
+    def common = new com.mirantis.mk.Common()
+    def generatedModel = multiModels ? "${modelEnv}/${contextName}" : modelEnv
+    def templateContext = readYaml text: context
+    def clusterDomain = templateContext.default_context.cluster_domain
+    def clusterName = templateContext.default_context.cluster_name
+    def outputDestination = "${generatedModel}/classes/cluster/${clusterName}"
+    def templateBaseDir = templateEnvDir
+    def templateDir = "${templateEnvDir}/dir"
+    def templateOutputDir = templateBaseDir
+    dir(templateEnvDir) {
+        common.infoMsg("Generating model from context ${contextName}")
+        def productList = ["infra", "cicd", "kdt", "opencontrail", "kubernetes", "openstack", "oss", "stacklight", "ceph"]
+        for (product in productList) {
+            // get templateOutputDir and productDir
+            templateOutputDir = "${templateEnvDir}/output/${product}"
+            productDir = product
+            templateDir = "${templateEnvDir}/cluster_product/${productDir}"
+            // Bw for 2018.8.1 and older releases
+            if (product.startsWith("stacklight") && (!fileExists(templateDir))) {
+                common.warningMsg("Old release detected! productDir => 'stacklight2' ")
+                productDir = "stacklight2"
+                templateDir = "${templateEnvDir}/cluster_product/${productDir}"
+            }
+            // generate infra unless its explicitly disabled
+            if ((product == "infra" && templateContext.default_context.get("infra_enabled", "True").toBoolean())
+                 || (templateContext.default_context.get(product + "_enabled", "False").toBoolean())) {
+
+                common.infoMsg("Generating product " + product + " from " + templateDir + " to " + templateOutputDir)
+
+                sh "rm -rf ${templateOutputDir} || true"
+                sh "mkdir -p ${templateOutputDir}"
+                sh "mkdir -p ${outputDestination}"
+
+                buildCookiecutterTemplate(templateDir, context, templateOutputDir, virtualenv, templateBaseDir)
+                sh "mv -v ${templateOutputDir}/${clusterName}/* ${outputDestination}"
+            } else {
+                common.warningMsg("Product " + product + " is disabled")
+            }
+        }
+
+        def localRepositories = templateContext.default_context.local_repositories
+        localRepositories = localRepositories ? localRepositories.toBoolean() : false
+        def offlineDeployment = templateContext.default_context.offline_deployment
+        offlineDeployment = offlineDeployment ? offlineDeployment.toBoolean() : false
+        if (localRepositories && !offlineDeployment) {
+            def mcpVersion = templateContext.default_context.mcp_version
+            def aptlyModelUrl = templateContext.default_context.local_model_url
+            def ssh = new com.mirantis.mk.Ssh()
+            dir(path: modelEnv) {
+                ssh.agentSh "git submodule add \"${aptlyModelUrl}\" \"classes/cluster/${clusterName}/cicd/aptly\""
+                if (!(mcpVersion in ["nightly", "testing", "stable"])) {
+                    ssh.agentSh "cd \"classes/cluster/${clusterName}/cicd/aptly\";git fetch --tags;git checkout ${mcpVersion}"
+                }
+            }
+        }
+
+        def nodeFile = "${generatedModel}/nodes/${saltMasterName}.${clusterDomain}.yml"
+        def nodeString = """classes:
+- cluster.${clusterName}.infra.config
+parameters:
+  _param:
+    linux_system_codename: xenial
+    reclass_data_revision: master
+  linux:
+    system:
+      name: ${saltMasterName}
+      domain: ${clusterDomain}
+    """
+        sh "mkdir -p ${generatedModel}/nodes/"
+        writeFile(file: nodeFile, text: nodeString)
+    }
 }
 
 /**
