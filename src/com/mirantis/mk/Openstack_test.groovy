@@ -448,8 +448,10 @@ def getOpenStackUpgradeServices(env, target){
     if ( !global_apps['return'][0].values()[0].isEmpty() ) {
         Map<String,Integer> _sorted_apps = [:]
         for (k in global_apps['return'][0].values()[0].keySet()) {
-            if (k in node_apps && salt.getPillar(env, 'bmt01*', "${k}:upgrade:enabled")['return'][0].values()[0].toBoolean()) {
-              _sorted_apps[k] = global_apps['return'][0].values()[0][k].values()[0].toInteger()
+            if (k in node_apps) {
+                if (salt.getPillar(env, target, "${k}:upgrade:enabled")['return'][0].values()[0].toBoolean()) {
+                  _sorted_apps[k] = global_apps['return'][0].values()[0][k].values()[0].toInteger()
+                }
             }
         }
         node_sorted_apps = common.SortMapByValueAsc(_sorted_apps).keySet()
