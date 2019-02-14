@@ -450,8 +450,9 @@ def getOpenStackUpgradeServices(env, target){
         Map<String,Integer> _sorted_apps = [:]
         for (k in global_apps['return'][0].values()[0].keySet()) {
             if (k in node_apps) {
-                if (node_pillar['return'][0].values()[k]['upgrades']['enabled'][0].toBoolean()) {
-                  _sorted_apps[k] = global_apps['return'][0].values()[0][k].values()[0].toInteger()
+                if (node_pillar['return'][0].values()[k]['upgrades']['enabled'][0] != null) {
+                    if (node_pillar['return'][0].values()[k]['upgrades']['enabled'][0].toBoolean())
+                      _sorted_apps[k] = global_apps['return'][0].values()[0][k].values()[0].toInteger()
                 }
             }
         }
