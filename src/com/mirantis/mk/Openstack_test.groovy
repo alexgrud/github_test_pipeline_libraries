@@ -444,12 +444,13 @@ def getOpenStackUpgradeServices(env, target){
 
     def global_apps = salt.getConfig(env, 'I@salt:master:enabled:true', 'orchestration.upgrade.applications')
     def node_apps = salt.getPillar(env, target, '__reclass__:applications')['return'][0].values()[0]
+    def node_pillar = salt.getPillar(env, target)
     def node_sorted_apps = []
     if ( !global_apps['return'][0].values()[0].isEmpty() ) {
         Map<String,Integer> _sorted_apps = [:]
         for (k in global_apps['return'][0].values()[0].keySet()) {
             if (k in node_apps) {
-                if (salt.getPillar(env, target, "${k}:upgrade:enabled")['return'][0].values()[0].toBoolean()) {
+                if (salt.getPillar(node_pillar['return'][0].values()[k]['upgrade']['enabled'][0].toBoolean()) {
                   _sorted_apps[k] = global_apps['return'][0].values()[0][k].values()[0].toInteger()
                 }
             }
