@@ -268,6 +268,7 @@ def compareReclassVersions(config) {
 def testNode(LinkedHashMap config) {
     def common = new com.mirantis.mk.Common()
     def dockerHostname = config.get('dockerHostname')
+    def domain = config.get('domain')
     def reclassEnv = config.get('reclassEnv')
     def clusterName = config.get('clusterName', "")
     def formulasSource = config.get('formulasSource', 'pkg')
@@ -276,10 +277,11 @@ def testNode(LinkedHashMap config) {
     def aptRepoUrl = config.get('aptRepoUrl', "")
     def aptRepoGPG = config.get('aptRepoGPG', "")
     def testContext = config.get('testContext', 'test')
+    def nodegenerator = config.get('nodegenerator', false)
     config['envOpts'] = [
         "RECLASS_ENV=${reclassEnv}", "SALT_STOPSTART_WAIT=5",
-        "MASTER_HOSTNAME=${dockerHostname}", "CLUSTER_NAME=${clusterName}",
-        "MINION_ID=${dockerHostname}", "FORMULAS_SOURCE=${formulasSource}",
+        "HOSTNAME=${dockerHostname}", "CLUSTER_NAME=${clusterName}",
+        "DOMAIN=${domain}", "FORMULAS_SOURCE=${formulasSource}",
         "EXTRA_FORMULAS=${extraFormulas}", "EXTRA_FORMULAS_PKG_ALL=true",
         "RECLASS_IGNORE_CLASS_NOTFOUND=${ignoreClassNotfound}", "DEBUG=1",
         "APT_REPOSITORY=${aptRepoUrl}", "APT_REPOSITORY_GPG=${aptRepoGPG}"
@@ -293,6 +295,7 @@ def testNode(LinkedHashMap config) {
         '002_Prepare_something'          : {
             sh('''#!/bin/bash -x
               rsync -ah ${RECLASS_ENV}/* /srv/salt/reclass && echo '127.0.1.2  salt' >> /etc/hosts
+              echo "127.0.0.1 ${HOSTNAME}.${DOMAIN}" >> /etc/hosts
               if [ -f '/srv/salt/reclass/salt_master_pillar.asc' ] ; then
                 mkdir -p /etc/salt/gpgkeys
                 chmod 700 /etc/salt/gpgkeys
@@ -340,6 +343,31 @@ def testNode(LinkedHashMap config) {
             archiveArtifacts artifacts: "nodesinfo.tar.gz"
         }
     ]
+    // this tool should be tested in master branch only
+    // and not for all jobs, as pilot will be used cc-reclass-chunk
+    if (nodegenerator) {
+        config['runCommands']['005_Test_new_nodegenerator'] = {
+            try {
+                sh('''#!/bin/bash
+                new_generated_dir=/srv/salt/_new_generated
+                mkdir -p ${new_generated_dir}
+                nodegenerator -b /srv/salt/reclass/classes/ -o ${new_generated_dir} ${CLUSTER_NAME}
+                diff -r /srv/salt/reclass/nodes/_generated ${new_generated_dir} > /tmp/nodegenerator.diff
+                tar -czf /tmp/_generated.tar.gz /srv/salt/reclass/nodes/_generated/
+                tar -czf /tmp/_new_generated.tar.gz ${new_generated_dir}/
+                tar -czf /tmp/_model.tar.gz /srv/salt/reclass/classes/cluster/*
+                ''')
+            } catch (Exception e) {
+                print "Test new nodegenerator tool is failed: ${e}"
+            }
+        }
+        config['runFinally']['002_Archive_nodegenerator_artefact'] = {
+            sh(script: "cd /tmp; [ -f nodegenerator.diff ] && tar -czf ${env.WORKSPACE}/nodegenerator.tar.gz nodegenerator.diff _generated.tar.gz _new_generated.tar.gz _model.tar.gz", returnStatus: true)
+            if (fileExists('nodegenerator.tar.gz')) {
+                archiveArtifacts artifacts: "nodegenerator.tar.gz"
+            }
+        }
+    }
     testResult = setupDockerAndTest(config)
     if (testResult) {
         common.infoMsg("Node test for context: ${testContext} model: ${reclassEnv} finished: SUCCESS")
