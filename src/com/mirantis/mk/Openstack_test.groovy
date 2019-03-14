@@ -446,7 +446,7 @@ def getOpenStackUpgradeServices(env, target, upgrade_condition=true){
     def global_apps = salt.getConfig(env, 'I@salt:master:enabled:true', 'orchestration.upgrade.applications')
     def node_apps = salt.getPillar(env, target, '__reclass__:applications')['return'][0].values()[0]
     if (upgrade_condition) {
-        def node_pillar = salt.getPillar(env, target)
+        node_pillar = salt.getPillar(env, target)
     }
     def node_sorted_apps = []
     if ( !global_apps['return'][0].values()[0].isEmpty() ) {
