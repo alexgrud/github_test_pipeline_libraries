@@ -68,6 +68,7 @@ def verifyGaleraStatus(env, slave=false, checkTimeSync=false) {
             testNode = "I@galera:master"
         } catch (Exception e) {
             common.errorMsg('Galera master is not reachable.')
+            common.errorMsg(e.getMessage())
             return 128
         }
     } else {
@@ -76,6 +77,7 @@ def verifyGaleraStatus(env, slave=false, checkTimeSync=false) {
             common.infoMsg("Testing Galera slave minions: ${galeraSlaves}")
         } catch (Exception e) {
             common.errorMsg("Cannot obtain Galera slave minions list.")
+            common.errorMsg(e.getMessage())
             return 129
         }
         for (minion in galeraSlaves) {
@@ -92,6 +94,25 @@ def verifyGaleraStatus(env, slave=false, checkTimeSync=false) {
         common.errorMsg("No Galera slave was reachable.")
         return 130
     }
+    def checkTargets = salt.getMinions(env, "I@xtrabackup:client or I@xtrabackup:server")
+    for (checkTarget in checkTargets) {
+        def nodeStatus = salt.minionsReachable(env, 'I@salt:master', checkTarget, null, 10, 5)
+        if (nodeStatus != null) {
+            def iostatRes = salt.getIostatValues(['saltId': env, 'target': checkTarget, 'parameterName': "%util", 'output': true])
+            if (iostatRes == [:]) {
+                common.errorMsg("Recevived empty response from iostat call on ${checkTarget}. Maybe 'sysstat' package is not installed?")
+                return 140
+            }
+            for (int i = 0; i < iostatRes.size(); i++) {
+                def diskKey = iostatRes.keySet()[i]
+                if (!(iostatRes[diskKey].toString().isBigDecimal() && (iostatRes[diskKey].toBigDecimal() < 0.5 ))) {
+                    common.errorMsg("Disk ${diskKey} has to high i/o utilization. Maximum value is 0.5 and current value is ${iostatRes[diskKey]}.")
+                    return 141
+                }
+            }
+        }
+    }
+    common.infoMsg("Disk i/o utilization was checked and everything seems to be in order.")
     if (checkTimeSync && !salt.checkClusterTimeSync(env, "I@galera:master or I@galera:slave")) {
         common.errorMsg("Time in cluster is desynchronized or it couldn't be detemined. You should fix this issue manually before proceeding.")
         return 131
@@ -100,6 +121,7 @@ def verifyGaleraStatus(env, slave=false, checkTimeSync=false) {
         out = salt.runSaltProcessStep(env, "${testNode}", "mysql.status", [], null, false)
     } catch (Exception e) {
         common.errorMsg('Could not determine mysql status.')
+        common.errorMsg(e.getMessage())
         return 256
     }
     if (out) {
@@ -107,6 +129,7 @@ def verifyGaleraStatus(env, slave=false, checkTimeSync=false) {
             status = validateAndPrintGaleraStatusReport(env, out, testNode)
         } catch (Exception e) {
             common.errorMsg('Could not parse the mysql status output. Check it manually.')
+            common.errorMsg(e.getMessage())
             return 1
         }
     } else {
@@ -240,8 +263,9 @@ def getGaleraLastShutdownNode(env, nodes = []) {
         } else {
             members = salt.getReturnValues(salt.getPillar(env, "I@galera:master", "galera:master:members"))
         }
-    } catch (Exception er) {
+    } catch (Exception e) {
         common.errorMsg('Could not retrieve members list')
+        common.errorMsg(e.getMessage())
         return 'I@galera:master'
     }
     if (members) {
@@ -259,8 +283,9 @@ def getGaleraLastShutdownNode(env, nodes = []) {
                 if (seqno > highestSeqno) {
                     lastNode << [ip: "${member.host}", seqno: seqno]
                 }
-            } catch (Exception er) {
+            } catch (Exception e) {
                 common.warningMsg("Could not determine 'seqno' value for node ${member.host} ")
+                common.warningMsg(e.getMessage())
             }
         }
     }
@@ -272,11 +297,12 @@ def getGaleraLastShutdownNode(env, nodes = []) {
 }
 
 /**
- * Restores Galera database
- * @param env Salt Connection object or pepperEnv
+ * Restores Galera cluster
+ * @param env           Salt Connection object or pepperEnv
+ * @param runRestoreDb  Boolean to determine if the restoration of DB should be run as well
  * @return output of salt commands
  */
-def restoreGaleraDb(env) {
+def restoreGaleraCluster(env, runRestoreDb=true) {
     def salt = new com.mirantis.mk.Salt()
     def common = new com.mirantis.mk.Common()
     try {
@@ -320,12 +346,15 @@ def restoreGaleraDb(env) {
     } catch (Exception er) {
         common.warningMsg('File is not present')
     }
+
     salt.cmdRun(env, lastNodeTarget, "sed -i '/gcomm/c\\wsrep_cluster_address=\"gcomm://\"' /etc/mysql/my.cnf")
-    def backup_dir = salt.getReturnValues(salt.getPillar(env, lastNodeTarget, 'xtrabackup:client:backup_dir'))
-    if(backup_dir == null || backup_dir.isEmpty()) { backup_dir='/var/backups/mysql/xtrabackup' }
-    salt.runSaltProcessStep(env, lastNodeTarget, 'file.remove', ["${backup_dir}/dbrestored"])
-    salt.cmdRun(env, 'I@xtrabackup:client', "su root -c 'salt-call state.sls xtrabackup'")
+
+    if (runRestoreDb) {
+        restoreGaleraDb(env, lastNodeTarget)
+    }
+
     salt.enforceState(env, lastNodeTarget, 'galera')
+
     // wait until mysql service on galera master is up
     try {
         salt.commandStatus(env, lastNodeTarget, 'service mysql status', 'running')
@@ -335,4 +364,21 @@ def restoreGaleraDb(env) {
 
     salt.runSaltProcessStep(env, "I@galera:master and not ${lastNodeTarget}", 'service.start', ['mysql'])
     salt.runSaltProcessStep(env, "I@galera:slave and not ${lastNodeTarget}", 'service.start', ['mysql'])
+}
+
+/**
+ * Restores Galera database
+ * @param env           Salt Connection object or pepperEnv
+ * @param targetNode    Node to be targeted
+ */
+def restoreGaleraDb(env, targetNode) {
+    def backup_dir = salt.getReturnValues(salt.getPillar(env, targetNode, 'xtrabackup:client:backup_dir'))
+    if(backup_dir == null || backup_dir.isEmpty()) { backup_dir='/var/backups/mysql/xtrabackup' }
+    salt.runSaltProcessStep(env, targetNode, 'file.remove', ["${backup_dir}/dbrestored"])
+    salt.cmdRun(env, 'I@xtrabackup:client', "su root -c 'salt-call state.sls xtrabackup'")
+}
+
+def restoreGaleraDb(env) {
+    common.warningMsg("This method was renamed to 'restoreGaleraCluster'. Please change your pipeline to use this call instead! If you think that you really wanted to call 'restoreGaleraDb' you may be missing 'targetNode' parameter in you call.")
+    return restoreGaleraCluster(env)
 }

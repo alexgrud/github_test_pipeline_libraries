@@ -33,7 +33,7 @@ def setupDockerAndTest(LinkedHashMap config) {
     def dockerContainerName = config.get('dockerContainerName', defaultContainerName)
     //  def dockerImageName = config.get('image', "mirantis/salt:saltstack-ubuntu-xenial-salt-2017.7")
     // FIXME /PROD-25244
-    def dockerImageName = config.get('image', "docker-dev-virtual.docker.mirantis.net/mirantis/salt:saltstack-ubuntu-xenial-salt-2017.7")
+    def dockerImageName = config.get('image', "docker-prod-local.artifactory.mirantis.com/mirantis/salt:saltstack-ubuntu-xenial-salt-2017.7")
     def dockerMaxCpus = config.get('dockerMaxCpus', 4)
     def dockerExtraOpts = config.get('dockerExtraOpts', [])
     def envOpts = config.get('envOpts', [])
@@ -50,17 +50,21 @@ def setupDockerAndTest(LinkedHashMap config) {
     if (baseRepoPreConfig) {
         // extra repo on mirror.mirantis.net, which is not supported before 2018.11.0 release
         def extraRepoSource = "deb [arch=amd64] http://mirror.mirantis.com/${distribRevision}/extra/xenial xenial main"
+        def releaseVersionQ4 = '2018.11.0'
+        def oldRelease = false
         try {
             def releaseNaming = 'yyyy.MM.dd'
             def repoDateUsed = new Date().parse(releaseNaming, distribRevision)
-            def extraAvailableFrom = new Date().parse(releaseNaming, '2018.11.0')
+            def extraAvailableFrom = new Date().parse(releaseNaming, releaseVersionQ4)
             if (repoDateUsed < extraAvailableFrom) {
                 extraRepoSource = "deb http://apt.mcp.mirantis.net/xenial ${distribRevision} extra"
+                oldRelease = true
             }
         } catch (Exception e) {
             common.warningMsg(e)
             if (!(distribRevision in ['nightly', 'proposed', 'testing'])) {
                 extraRepoSource = "deb [arch=amd64] http://apt.mcp.mirantis.net/xenial ${distribRevision} extra"
+                oldRelease = true
             }
         }
 
@@ -95,7 +99,17 @@ repo:
         // override for now
         def extraRepoMergeStrategy = config.get('extraRepoMergeStrategy', 'override')
         def extraRepos = config.get('extraRepos', [:])
+        def updateSaltFormulas = config.get('updateSaltFormulas', true).toBoolean()
         def defaultRepos = readYaml text: defaultExtraReposYaml
+        // Don't check for magic, if set explicitly
+        if (updateSaltFormulas) {
+            if (!oldRelease && distribRevision != releaseVersionQ4) {
+                defaultRepos['repo']['mcp_saltformulas_update'] = [
+                    'source'  : "deb [arch=amd64]  http://mirror.mirantis.com/update/${distribRevision}/salt-formulas/xenial xenial main",
+                    'repo_key': "http://mirror.mirantis.com/update/${distribRevision}/salt-formulas/xenial/archive-salt-formulas.key"
+                ]
+            }
+        }
         if (extraRepoMergeStrategy == 'merge') {
             extraReposConfig = common.mergeMaps(defaultRepos, extraRepos)
         } else {
@@ -110,6 +124,7 @@ repo:
         img.inside(dockerOptsFinal) {
             withEnv(envOpts) {
                 try {
+                    sh('printenv |sort -u')
                     // Currently, we don't have any other point to install
                     // runtime dependencies for tests.
                     if (baseRepoPreConfig) {

@@ -628,7 +628,7 @@ def installKubernetesControl(master, extra_tgt = '') {
     salt.enforceStateWithTest([saltId: master, target: "I@docker:host ${extra_tgt}", state: 'docker.host'])
 
      // If network engine is not opencontrail, run addons state for kubernetes
-    if (!salt.getPillar(master, "I@kubernetes:master ${extra_tgt}", 'kubernetes:master:network:opencontrail:enabled')) {
+    if (!salt.getReturnValues(salt.getPillar(master, "I@kubernetes:master ${extra_tgt}", 'kubernetes:master:network:opencontrail:enabled'))) {
         salt.enforceState([saltId: master, target: "I@kubernetes:master ${extra_tgt}", state: 'kubernetes.master.kube-addons'])
     }
 
@@ -646,16 +646,18 @@ def installKubernetesControl(master, extra_tgt = '') {
 
     // If network engine is opencontrail, run master state for kubernetes without kube-addons
     // The kube-addons state will be called later only in case of opencontrail
-    if (salt.getPillar(master, "I@kubernetes:master ${extra_tgt}", 'kubernetes:master:network:opencontrail:enabled')) {
+    if (salt.getReturnValues(salt.getPillar(master, "I@kubernetes:master ${extra_tgt}", 'kubernetes:master:network:opencontrail:enabled'))) {
         // Run k8s on first node without master.setup and master.kube-addons
         salt.enforceStateWithExclude([saltId: master, target: "${first_target} ${extra_tgt}", state: "kubernetes.master", excludedStates: "kubernetes.master.setup,kubernetes.master.kube-addons"])
         // Run k8s without master.setup and master.kube-addons
         salt.enforceStateWithExclude([saltId: master, target: "I@kubernetes:master ${extra_tgt}", state: "kubernetes", excludedStates: "kubernetes.master.setup,kubernetes.master.kube-addons,kubernetes.client"])
     } else {
         // Run k8s on first node without master.setup and master.kube-addons
-        salt.enforceStateWithExclude([saltId: master, target: "${first_target} ${extra_tgt}", state: "kubernetes.master", excludedStates: "kubernetes.master.setup"])
+        salt.enforceStateWithExclude([saltId: master, target: "${first_target} ${extra_tgt}", state: "kubernetes.master", excludedStates: "kubernetes.master.setup,kubernetes.master.kube-addons"])
         // Run k8s without master.setup
-        salt.enforceStateWithExclude([saltId: master, target: "I@kubernetes:master ${extra_tgt}", state: "kubernetes", excludedStates: "kubernetes.master.setup,kubernetes.client"])
+        salt.enforceStateWithExclude([saltId: master, target: "I@kubernetes:master ${extra_tgt}", state: "kubernetes", excludedStates: "kubernetes.master.setup,kubernetes.client,kubernetes.control*"])
+        // Run k8s control on first node only
+        salt.enforceState([saltId: master, target: "${first_target} ${extra_tgt}", state: 'kubernetes.control'])
     }
 
     // Run k8s master setup
@@ -683,9 +685,6 @@ def installKubernetesCompute(master, extra_tgt = '') {
 
     // Install Kubernetes and Calico
     salt.enforceState([saltId: master, target: "I@kubernetes:pool and not I@kubernetes:master ${extra_tgt}", state: 'kubernetes.pool'])
-
-    // Install Tiller and all configured releases
-    salt.enforceStateWithTest([saltId: master, target: "I@helm:client ${extra_tgt}", state: 'helm'])
     salt.runSaltProcessStep(master, "I@kubernetes:pool and not I@kubernetes:master ${extra_tgt}", 'service.restart', ['kubelet'])
 }
 
@@ -792,11 +791,11 @@ def installCicd(master, extra_tgt = '') {
     }
 
     // Jenkins
-    def jenkins_master_host_pillar = salt.getPillar(master, jenkins_compound, '_param:jenkins_master_host')
-    def jenkins_master_port_pillar = salt.getPillar(master, jenkins_compound, '_param:jenkins_master_port')
-    def jenkins_master_url_prefix_pillar = salt.getPillar(master, jenkins_compound, '_param:jenkins_master_url_prefix')
-
-    jenkins_master_url = "http://${salt.getReturnValues(jenkins_master_host_pillar)}:${salt.getReturnValues(jenkins_master_port_pillar)}${salt.getReturnValues(jenkins_master_url_prefix_pillar)}"
+    def jenkins_master_host = salt.getReturnValues(salt.getPillar(master, jenkins_compound, '_param:jenkins_master_host'))
+    def jenkins_master_port = salt.getReturnValues(salt.getPillar(master, jenkins_compound, '_param:jenkins_master_port'))
+    def jenkins_master_protocol = salt.getReturnValues(salt.getPillar(master, jenkins_compound, '_param:jenkins_master_protocol'))
+    def jenkins_master_url_prefix = salt.getReturnValues(salt.getPillar(master, jenkins_compound, '_param:jenkins_master_url_prefix'))
+    jenkins_master_url = "${jenkins_master_protocol}://${jenkins_master_host}:${jenkins_master_port}${jenkins_master_url_prefix}"
 
     timeout(wait_timeout) {
       common.infoMsg('Waiting for Jenkins to come up..')
@@ -877,23 +876,35 @@ def installStacklight(master, extra_tgt = '') {
     salt.enforceStateWithTest([saltId: master, target: "I@kibana:server:enabled:true ${extra_tgt}", state: 'kibana.server'])
 
     // Check ES health cluster status
-    def pillar = salt.getPillar(master, "I@elasticsearch:client ${extra_tgt}", 'elasticsearch:client:server:host')
+    def pillar = salt.getReturnValues(salt.getPillar(master, "I@elasticsearch:client ${extra_tgt}", 'elasticsearch:client:server:host'))
     def elasticsearch_vip
-    if(!pillar['return'].isEmpty()) {
-        elasticsearch_vip = pillar['return'][0].values()[0]
+    if(pillar) {
+        elasticsearch_vip = pillar
     } else {
         common.errorMsg('[ERROR] Elasticsearch VIP address could not be retrieved')
     }
-    pillar = salt.getPillar(master, "I@elasticsearch:client ${extra_tgt}", 'elasticsearch:client:server:port')
+
+    pillar = salt.getReturnValues(salt.getPillar(master, "I@elasticsearch:client ${extra_tgt}", 'elasticsearch:client:server:port'))
     def elasticsearch_port
-    if(!pillar['return'].isEmpty()) {
-        elasticsearch_port = pillar['return'][0].values()[0]
+    if(pillar) {
+        elasticsearch_port = pillar
     } else {
         common.errorMsg('[ERROR] Elasticsearch VIP port could not be retrieved')
     }
+
+    pillar = salt.getReturnValues(salt.getPillar(master, "I@elasticsearch:client ${extra_tgt}", 'elasticsearch:client:server:scheme'))
+    def elasticsearch_scheme
+    if(pillar) {
+        elasticsearch_scheme = pillar
+        common.infoMsg("[INFO] Using elasticsearch scheme: ${elasticsearch_scheme}")
+    } else {
+        common.infoMsg('[INFO] No pillar with Elasticsearch server scheme, using scheme: http')
+        elasticsearch_scheme = "http"
+    }
+
     common.retry(step_retries,step_retries_wait) {
         common.infoMsg('Waiting for Elasticsearch to become green..')
-        salt.cmdRun(master, "I@elasticsearch:client ${extra_tgt}", "curl -sf ${elasticsearch_vip}:${elasticsearch_port}/_cat/health | awk '{print \$4}' | grep green")
+        salt.cmdRun(master, "I@elasticsearch:client ${extra_tgt}", "curl -skf ${elasticsearch_scheme}://${elasticsearch_vip}:${elasticsearch_port}/_cat/health | awk '{print \$4}' | grep green")
     }
 
     salt.enforceState([saltId: master, target: "I@elasticsearch:client ${extra_tgt}", state: 'elasticsearch.client', retries: step_retries, retries_wait: step_retries_wait])
@@ -940,7 +951,7 @@ def installStacklight(master, extra_tgt = '') {
     salt.enforceState([saltId: master, target: "I@docker:swarm and I@prometheus:server ${extra_tgt}", state: 'prometheus'])
 
     //Configure Remote Collector in Docker Swarm for Openstack deployments
-    if (!common.checkContains('STACK_INSTALL', 'k8s')) {
+    if (salt.testTarget(master, "I@heka:remote_collector ${extra_tgt}")) {
         salt.enforceState([saltId: master, target: "I@docker:swarm and I@prometheus:server ${extra_tgt}", state: 'heka.remote_collector', failOnError: false])
     }
 
@@ -974,7 +985,8 @@ def installStacklight(master, extra_tgt = '') {
 
     common.infoMsg("Waiting for service on http://${stacklight_vip}:15013/ to start")
     sleep(120)
-    salt.enforceState([saltId: master, target: "I@grafana:client ${extra_tgt}", state: 'grafana.client'])
+
+    salt.enforceState([saltId: master, target: "I@grafana:client ${extra_tgt}", state: 'grafana.client', retries: step_retries, retries_wait: step_retries_wait])
 }
 
 def installStacklightv1Control(master, extra_tgt = '') {
