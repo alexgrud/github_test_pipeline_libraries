@@ -370,7 +370,7 @@ def getGerritChangeByNum(credentialsId, virtualEnv, repoDir, gitRemote, changeNu
  * @param gitTopic                 the name of the topic
  * @param gitBranch                the name of git branch
  */
-def postGerritReview (credentialsId, virtualEnv, repoDir, gitName, gitEmail, gitRemote, gitTopic, gitBranch) {
+def postGerritReview(credentialsId, virtualEnv, repoDir, gitName, gitEmail, gitRemote, gitTopic, gitBranch) {
     dir(repoDir) {
         sshagent([credentialsId]) {
             reviewOut = sh(
