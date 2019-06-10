@@ -110,7 +110,9 @@ def commitGitChanges(path, message, gitEmail='jenkins@localhost', gitName='jenki
         global_arg = '--global'
     }
     if (amend) {
-        gitOpts = "--amend"
+        gitOpts = '--amend'
+    } else {
+        gitOpts = ''
     }
     dir(path) {
         sh "git config ${global_arg} user.email '${gitEmail}'"
