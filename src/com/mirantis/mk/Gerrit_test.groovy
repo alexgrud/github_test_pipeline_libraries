@@ -330,7 +330,6 @@ def findGerritChange(credentialsId, LinkedHashMap gerritAuth, LinkedHashMap chan
         scriptText += " ${it.key}:${it.value}"
     }
     scriptText += " | fgrep -v runTimeMilliseconds || :"
-    println(scriptText)
     sshagent([credentialsId]) {
         jsonChange = sh(
              script:scriptText,
@@ -349,13 +348,43 @@ def findGerritChange(credentialsId, LinkedHashMap gerritAuth, LinkedHashMap chan
  * @param gitRemote                the value of git remote
  * @param changeNum                the number of change to download
  */
-def getGerritChangeByNum(credentialsId, virtualenv, repoDir, gitRemote, changeNum) {
+def getGerritChangeByNum(credentialsId, virtualEnv, repoDir, gitRemote, changeNum) {
     sshagent([credentialsId]) {
         dir(repoDir) {
             sh """#!/bin/bash -ex
-                        source ${virtualenv}/bin/activate
+                        source ${virtualEnv}/bin/activate
                         git review -r ${gitRemote} -d ${changeNum}
                """
+        }
+    }
+}
+
+/**
+ * Post Gerrit review
+ * @param credentialsId            credentials ID
+ * @param virtualenv               virtualenv path
+ * @param repoDir                  repository directory
+ * @param gitName                  committer name
+ * @param gitEmail                 committer email
+ * @param gitRemote                the value of git remote
+ * @param gitTopic                 the name of the topic
+ * @param gitBranch                the name of git branch
+ */
+def postGerritReview (credentialsId, virtualEnv, repoDir, gitName, gitEmail, gitRemote, gitTopic, gitBranch) {
+    dir(repoDir) {
+        sshagent([credentialsId]) {
+            reviewOut = sh(
+                script:
+                    """#!/bin/bash -ex
+                    source ${virtualEnv}/bin/activate
+                    GIT_COMMITTER_NAME=${gitName} \
+                    GIT_COMMITTER_EMAIL=${gitEmail} \
+                    git review -r ${gitRemote} \
+                    -t ${gitTopic} \
+                    ${gitBranch}
+                            """,
+                        returnStdout: true,
+                    ).trim()
         }
     }
 }
