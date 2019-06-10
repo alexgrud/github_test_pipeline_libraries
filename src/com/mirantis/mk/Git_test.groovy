@@ -240,3 +240,17 @@ def getBranchesForGitRepo(repoUrl, branchMatcher = ''){
     return branchesList.tokenize('\n')
 }
 
+/**
+ * Return git change ID of the last commit
+ *
+ * @param repoDir           directory with repository
+ */
+def getGitChangeId(repoDir) {
+    dir(repoDir) {
+        gitChangeId = sh (
+            script: 'git --no-pager log -1 | egrep -o "Change-Id:.*" | tail -1',
+            returnStdout: true,
+        ).trim()
+    }
+    return gitChangeId
+}
