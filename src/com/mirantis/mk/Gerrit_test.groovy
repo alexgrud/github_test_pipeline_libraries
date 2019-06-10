@@ -339,3 +339,23 @@ def findGerritChange(credentialsId, LinkedHashMap gerritAuth, LinkedHashMap chan
     }
     return jsonChange
 }
+
+/**
+ * Download Gerrit review by number
+ *
+ * @param credentialsId            credentials ID
+ * @param virtualenv               virtualenv path
+ * @param repoDir                  repository directory
+ * @param gitRemote                the value of git remote
+ * @param changeNum                the number of change to download
+ */
+def getGerritChangeByNum(credentialsId, virtualenv, repoDir, gitRemote, changeNum) {
+    sshagent([credentialsId]) {
+        dir(repoDir) {
+            sh """#!/bin/bash -ex
+                        source ${virtualenv}/bin/activate
+                        git review -r ${gitRemote} -d ${changeNum}
+               """
+        }
+    }
+}
