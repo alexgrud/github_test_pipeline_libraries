@@ -349,12 +349,10 @@ def findGerritChange(credentialsId, LinkedHashMap gerritAuth, LinkedHashMap chan
  * @param changeNum                the number of change to download
  */
 def getGerritChangeByNum(credentialsId, virtualEnv, repoDir, gitRemote, changeNum) {
+    def python = new com.mirantis.mk.Python()
     sshagent([credentialsId]) {
         dir(repoDir) {
-            sh """#!/bin/bash -ex
-                        source ${virtualEnv}/bin/activate
-                        git review -r ${gitRemote} -d ${changeNum}
-               """
+            python.runVirtualenvCommand(virtualEnv, "git review -r ${gitRemote} -d ${changeNum}")
         }
     }
 }
@@ -371,20 +369,18 @@ def getGerritChangeByNum(credentialsId, virtualEnv, repoDir, gitRemote, changeNu
  * @param gitBranch                the name of git branch
  */
 def postGerritReview(credentialsId, virtualEnv, repoDir, gitName, gitEmail, gitRemote, gitTopic, gitBranch) {
-    dir(repoDir) {
-        sshagent([credentialsId]) {
-            reviewOut = sh(
-                script:
-                    """#!/bin/bash -ex
+    def python = new com.mirantis.mk.Python()
+    def cmdText = """#!/bin/bash -ex
                     source ${virtualEnv}/bin/activate
                     GIT_COMMITTER_NAME=${gitName} \
                     GIT_COMMITTER_EMAIL=${gitEmail} \
                     git review -r ${gitRemote} \
                     -t ${gitTopic} \
                     ${gitBranch}
-                            """,
-                        returnStdout: true,
-                    ).trim()
+                  """
+    sshagent([credentialsId]) {
+        dir(repoDir) {
+            python.runVirtualenvCommand(virtualEnv, cmdText)
         }
     }
 }
