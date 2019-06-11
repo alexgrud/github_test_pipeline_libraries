@@ -370,8 +370,7 @@ def getGerritChangeByNum(credentialsId, virtualEnv, repoDir, gitRemote, changeNu
  */
 def postGerritReview(credentialsId, virtualEnv, repoDir, gitName, gitEmail, gitRemote, gitTopic, gitBranch) {
     def python = new com.mirantis.mk.Python()
-    def cmdText = """#!/bin/bash -ex
-                    source ${virtualEnv}/bin/activate
+    def cmdText = """
                     GIT_COMMITTER_NAME=${gitName} \
                     GIT_COMMITTER_EMAIL=${gitEmail} \
                     git review -r ${gitRemote} \
