@@ -34,7 +34,12 @@ def setupVirtualenv(path, python = 'python2', reqs = [], reqs_path = null, clean
     sh(returnStdout: true, script: virtualenv_cmd)
     if (!offlineDeployment) {
         try {
-            runVirtualenvCommand(path, "pip install -U setuptools pip")
+            def pipPackage = 'pip'
+            if (python == 'python2') {
+                pipPackage = "\"pip<=19.3.1\""
+                common.infoMsg("Pinning pip package due to end of life of Python2 to ${pipPackage} version.")
+            }
+            runVirtualenvCommand(path, "pip install -U setuptools ${pipPackage}")
         } catch (Exception e) {
             common.warningMsg("Setuptools and pip cannot be updated, you might be offline but OFFLINE_DEPLOYMENT global property not initialized!")
         }
@@ -53,22 +58,97 @@ def setupVirtualenv(path, python = 'python2', reqs = [], reqs_path = null, clean
 /**
  * Run command in specific python virtualenv
  *
- * @param path Path to virtualenv
- * @param cmd Command to be executed
+ * @param path   Path to virtualenv
+ * @param cmd    Command to be executed
  * @param silent dont print any messages (optional, default false)
+ * @param flexAnswer return answer like a dict, with format ['status' : int, 'stderr' : str, 'stdout' : str ]
  */
-def runVirtualenvCommand(path, cmd, silent = false) {
+def runVirtualenvCommand(path, cmd, silent = false, flexAnswer = false) {
     def common = new com.mirantis.mk.Common()
-
-    virtualenv_cmd = "set +x; . ${path}/bin/activate; ${cmd}"
+    def res
+    def virtualenv_cmd = "set +x; . ${path}/bin/activate; ${cmd}"
     if (!silent) {
         common.infoMsg("[Python ${path}] Run command ${cmd}")
     }
-    output = sh(
-        returnStdout: true,
-        script: virtualenv_cmd
-    ).trim()
-    return output
+    if (flexAnswer) {
+        res = common.shCmdStatus(virtualenv_cmd)
+    } else {
+        res = sh(
+            returnStdout: true,
+            script: virtualenv_cmd
+        ).trim()
+    }
+    return res
+}
+
+/**
+ * Another command runner to control outputs and exit code
+ *
+ * - always print the executing command to control the pipeline execution
+ * - always allows to get the stdout/stderr/status in the result, even with enabled console enabled
+ * - throws an exception with stderr content, so it could be read from the job status and processed
+ *
+ * @param cmd           String, command to be executed
+ * @param virtualenv    String, path to Python virtualenv (optional, default: '')
+ * @param verbose       Boolean, true: (default) mirror stdout to console and to the result['stdout'] at the same time,
+ *                               false: store stdout only to result['stdout']
+ * @param check_status  Boolean, true: (default) throw an exception which contains result['stderr'] if exit code is not 0,
+ *                               false: only print stderr if not empty, and return the result
+ * @return              Map, ['status' : int, 'stderr' : str, 'stdout' : str ]
+ */
+def runCmd(String cmd, String virtualenv='', Boolean verbose=true, Boolean check_status=true) {
+    def common = new com.mirantis.mk.Common()
+
+    def script
+    def redirect_output
+    def result = [:]
+    def stdout_path = sh(script: '#!/bin/bash +x\nmktemp', returnStdout: true).trim()
+    def stderr_path = sh(script: '#!/bin/bash +x\nmktemp', returnStdout: true).trim()
+
+    if (verbose) {
+        // show stdout to console and store to stdout_path
+        redirect_output = " 1> >(tee -a ${stdout_path}) 2>${stderr_path}"
+    } else {
+        // only store stdout to stdout_path
+        redirect_output = " 1>${stdout_path} 2>${stderr_path}"
+    }
+
+    if (virtualenv) {
+        common.infoMsg("Run shell command in Python virtualenv [${virtualenv}]:\n" + cmd)
+        script = """#!/bin/bash +x
+            . ${virtualenv}/bin/activate
+            ( ${cmd.stripIndent()} ) ${redirect_output}
+        """
+    } else {
+        common.infoMsg('Run shell command:\n' + cmd)
+        script = """#!/bin/bash +x
+            ( ${cmd.stripIndent()} ) ${redirect_output}
+        """
+    }
+
+    result['status'] = sh(script: script, returnStatus: true)
+    result['stdout'] = readFile(stdout_path)
+    result['stderr'] = readFile(stderr_path)
+    def cleanup_script = """#!/bin/bash +x
+        rm ${stdout_path} || true
+        rm ${stderr_path} || true
+    """
+    sh(script: cleanup_script)
+
+    if (result['status'] != 0 && check_status) {
+        def error_message = '\nScript returned exit code: ' + result['status'] + '\n<<<<<< STDERR: >>>>>>\n' + result['stderr']
+        common.errorMsg(error_message)
+        common.printMsg('', 'reset')
+        throw new Exception(error_message)
+    }
+
+    if (result['stderr'] && verbose) {
+        def warning_message = '\nScript returned exit code: ' + result['status'] + '\n<<<<<< STDERR: >>>>>>\n' + result['stderr']
+        common.warningMsg(warning_message)
+        common.printMsg('', 'reset')
+    }
+
+    return result
 }
 
 /**

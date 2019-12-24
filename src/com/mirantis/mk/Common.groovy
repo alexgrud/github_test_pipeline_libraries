@@ -147,6 +147,16 @@ def infoMsg(msg, color = true) {
 }
 
 /**
+ * Print informational message
+ *
+ * @param msg
+ * @param color Colorful output or not
+ */
+def infoSensitivityMsg(msg, color = true, replacing = []) {
+    printSensitivityMsg(msg, "cyan", replacing)
+}
+
+/**
  * Print error message
  *
  * @param msg
@@ -212,6 +222,25 @@ def getColorizedString(msg, color) {
  */
 def printMsg(msg, color) {
     print getColorizedString(msg, color)
+}
+
+/**
+ * Print sensitivity message
+ *
+ * @param msg Message to be printed
+ * @param color Color to use for output
+ * @param replacing List with maps for deletion (passwords, logins, etc).
+ *                  The first () matching is mandatory !
+ *                  Example:
+ *                  [/ (OS_PASSWORD=)(.*?)+ /,
+ *                   / (password = )(.*?)+ /,
+ *                   / (password )(.*?) / ]
+ */
+def printSensitivityMsg(msg, color, replacing = []) {
+    for (i in replacing) {
+        msg = msg.replaceAll(i, ' $1XXXXXX ')
+    }
+    printMsg(msg, color)
 }
 
 /**
@@ -460,10 +489,14 @@ def mergeMaps(Map onto, Map... overrides){
     }
     else if (overrides.length == 1) {
         overrides[0]?.each { k, v ->
-            if (v in Map && onto[k] in Map){
-                mergeMaps((Map) onto[k], (Map) v)
-            } else if (v in List) {
-                onto[k] += v
+            if (k in onto.keySet()) {
+                if (v in Map && onto[k] in Map){
+                    mergeMaps((Map) onto[k], (Map) v)
+                } else if (v in List) {
+                    onto[k] += v
+                } else {
+                    onto[k] = v
+                }
             } else {
                 onto[k] = v
             }
@@ -505,18 +538,19 @@ def countHashMapEquals(lm, param, eq) {
  */
 
 def shCmdStatus(cmd) {
+    // Set +x , to hide odd messages about temp file manipulations
     def res = [:]
-    def stderr = sh(script: 'mktemp', returnStdout: true).trim()
-    def stdout = sh(script: 'mktemp', returnStdout: true).trim()
+    def stderr = sh(script: 'set +x ; mktemp', returnStdout: true).trim()
+    def stdout = sh(script: 'set +x ; mktemp', returnStdout: true).trim()
 
     try {
         def status = sh(script: "${cmd} 1>${stdout} 2>${stderr}", returnStatus: true)
-        res['stderr'] = sh(script: "cat ${stderr}", returnStdout: true)
-        res['stdout'] = sh(script: "cat ${stdout}", returnStdout: true)
+        res['stderr'] = sh(script: "set +x; cat ${stderr}", returnStdout: true).trim()
+        res['stdout'] = sh(script: "set +x; cat ${stdout}", returnStdout: true).trim()
         res['status'] = status
     } finally {
-        sh(script: "rm ${stderr}", returnStdout: true)
-        sh(script: "rm ${stdout}", returnStdout: true)
+        sh(script: "set +x; rm ${stderr}")
+        sh(script: "set +x; rm ${stdout}")
     }
 
     return res
@@ -1004,4 +1038,28 @@ def debianExtraRepos(repoConfig) {
  */
 Date parseDate(String date, String format) {
     return Date.parse(format, date)
+}
+
+/**
+ * Generate Random Hash string
+ * @param n Hash length
+ * @param pool Pool to use for hash generation
+*/
+def generateRandomHashString(int n, ArrayList pool = []) {
+    if (!pool) {
+        pool = ['a'..'z','A'..'Z',0..9,'_','+','='].flatten()
+    }
+    Random rand = new Random(System.currentTimeMillis())
+    return (1..n).collect { pool[rand.nextInt(pool.size())] }.join()
+}
+
+/**
+ * Checks whether string is semver complaint version
+ * @param string version
+*/
+
+def isSemVer(version){
+    // Official regex for Semver2 (https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string)
+    String semVerRegex = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/
+    return version ==~ semVerRegex
 }
