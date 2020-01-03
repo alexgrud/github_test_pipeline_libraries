@@ -564,7 +564,7 @@ def restoreGaleraDb(env) {
 **/
 def ensureKeyPairRemoved(name, env, path) {
     def common = new com.mirantis.mk.Common()
-    def keypairs = runOpenstackCommand("openstack keypair list -f value -c name", env, path).tokenize('\n')
+    def keypairs = runOpenstackCommand("openstack keypair list -f value -c Name", env, path).tokenize('\n')
     println(keypairs)
     if (name in keypairs) {
         deleteKeyPair(env, name, path)
