@@ -562,12 +562,11 @@ def restoreGaleraDb(env) {
  * @param name         Name of the key pair to delete
  * @param path         Path to virtualenv
 **/
-def checkIfKeypairExistAndDelete(name, env, path) {
+def ensureKeyPairRemoved(name, env, path) {
     def common = new com.mirantis.mk.Common()
-    def cmd = "openstack keypair list -f value | grep -w \"${name}\" || true"
-    def keypairExist = runOpenstackCommand("${cmd}", env, path)
-    println(keypairExist)
-    if (keypairExist.size() > 0) {
+    def keypairs = runOpenstackCommand("openstack keypair list -f value -c name", env, path).tokenize('\n')
+    println(keypairs)
+    if (name in keypairs) {
         deleteKeyPair(env, name, path)
         common.infoMsg("Keypair ${name} has been deleted")
     } else {
