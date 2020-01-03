@@ -564,7 +564,7 @@ def restoreGaleraDb(env) {
 **/
 def checkIfKeypairExistAndDelete(name, env, path) {
     def common = new com.mirantis.mk.Common()
-    def cmd = "openstack keypair list -f value | grep \"${name}\" || true"
+    def cmd = "openstack keypair list -f value | grep -w \"${name}\" || true"
     def keypairExist = runOpenstackCommand("${cmd}", env, path)
     println(keypairExist)
     if (keypairExist.size() > 0) {
