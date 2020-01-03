@@ -567,8 +567,8 @@ def checkIfKeypairExistAndDelete(name, env, path) {
     def keypairExist = runOpenstackCommand("${cmd}", env, path)
     if (keypairExist.size() > 0) {
         deleteKeyPair(env, stackName, path)
-        common.infoMsg("Keypair ${stackName} has been deleted")
+        common.infoMsg("Keypair ${name} has been deleted")
     } else {
-        common.warningMsg("Keypair ${stackName} not found")
+        common.warningMsg("Keypair ${name} not found")
     }
 }
