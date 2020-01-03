@@ -566,6 +566,9 @@ def ensureKeyPairRemoved(name, env, path) {
     def common = new com.mirantis.mk.Common()
     def keypairs = runOpenstackCommand("openstack keypair list -f value -c Name", env, path).tokenize('\n')
     println(keypairs)
+    println(name)
+    println(keypairs instanceof List)
+    println(name instanceof String)
     if (name in keypairs) {
         deleteKeyPair(env, name, path)
         common.infoMsg("Keypair ${name} has been deleted")
