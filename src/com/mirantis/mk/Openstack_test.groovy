@@ -49,11 +49,15 @@ def setupOpenstackVirtualenv(path, version = 'latest') {
         'cliff==2.8',
         // NOTE(vsaienko): cmd2 is dependency for cliff, since we don't using upper-contstraints
         // we have to pin cmd2 < 0.9.0 as later versions are not compatible with python2.
+        // the same for warlock package due: https://github.com/bcwaldon/warlock/commit/4241a7a9fbccfce7eb3298c2abdf00ca2dede64a
         // TODO(vsaienko): use upper-constraints here, as in requirements we set only lowest library
         //                 versions.
         'cmd2<0.9.0;python_version=="2.7"',
         'cmd2>=0.9.1;python_version=="3.4"',
         'cmd2>=0.9.1;python_version=="3.5"',
+        'warlock<=1.3.1;python_version=="2.7"',
+        'warlock>1.3.1;python_version=="3.4"',
+        'warlock>1.3.1;python_version=="3.5"',
         'python-openstackclient',
         'python-octaviaclient',
         'python-heatclient',
@@ -435,9 +439,17 @@ def stopServices(env, probe, target, services=[], confirm=false) {
 /**
  * Return intersection of globally installed services and those are
  * defined on specific target according to theirs priorities.
+ * By default services are added to the result list only if
+ * <service>.upgrade.enabled pillar is set to "True". However if it
+ * is needed to obtain list of upgrade services regardless of
+ * <service>.upgrade.enabled pillar value it is needed to set
+ * "upgrade_condition" param to "False".
  *
  * @param env     Salt Connection object or env
- * @param target  The target node to get list of apps for.
+ * @param target  The target node to get list of apps for
+ * @param upgrade_condition  Whether to take "upgrade:enabled"
+ *                           service pillar into consideration
+ *                           when obtaining list of upgrade services
 **/
 def getOpenStackUpgradeServices(env, target, upgrade_condition=true){
     def salt = new com.mirantis.mk.Salt()
@@ -472,7 +484,6 @@ def getOpenStackUpgradeServices(env, target, upgrade_condition=true){
 
   return node_sorted_apps
 }
-
 
 /**
  * Run specified upgrade phase for all services on given node.
@@ -542,4 +553,22 @@ def restoreGaleraDb(env) {
     def galera = new com.mirantis.mk.Galera()
     common.warningMsg("restoreGaleraDb method was moved to Galera class. Please change your calls accordingly.")
     return galera.restoreGaleraDb(env)
+}
+
+/**
+ * Check if Nova keypair exists and delete it.
+ *
+ * @param env          Connection parameters for OpenStack API endpoint
+ * @param name         Name of the key pair to delete
+ * @param path         Path to virtualenv
+**/
+def checkIfKeypairExistAndDelete(name, env, path) {
+    def cmd = "openstack keypair list -f value | grep \"${name}\" || true"
+    def keypairExist = runOpenstackCommand("${cmd}", env, path)
+    if (keypairExist.size() > 0) {
+        deleteKeyPair(env, stackName, path)
+        common.infoMsg("Keypair ${stackName} has been deleted")
+    } else {
+        common.warningMsg("Keypair ${stackName} not found")
+    }
 }
