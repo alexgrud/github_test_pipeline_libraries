@@ -566,6 +566,7 @@ def checkIfKeypairExistAndDelete(name, env, path) {
     def common = new com.mirantis.mk.Common()
     def cmd = "openstack keypair list -f value | grep \"${name}\" || true"
     def keypairExist = runOpenstackCommand("${cmd}", env, path)
+    println(keypairExist)
     if (keypairExist.size() > 0) {
         deleteKeyPair(env, name, path)
         common.infoMsg("Keypair ${name} has been deleted")
