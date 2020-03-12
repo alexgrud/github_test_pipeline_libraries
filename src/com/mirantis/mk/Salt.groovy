@@ -1,6 +1,5 @@
 package com.mirantis.mk
 
-import com.cloudbees.groovy.cps.NonCPS
 import java.util.stream.Collectors
 /**
  * Salt functions
@@ -50,14 +49,16 @@ def saltLogin(master) {
  *                 data: ['expression': 'I@openssh:server', 'type': 'compound'])
  * @param function Function to execute (eg. "state.sls")
  * @param batch    Batch param to salt (integer or string with percents)
+ *                      - null   - automatic decision (based on number of worker threads env var or not use batch at all)
+ *                      - int    - fixed size of batch
+ *                      - 'str%' - percantage of the requests in one batch
  * @param args     Additional arguments to function
  * @param kwargs   Additional key-value arguments to function
  * @param timeout  Additional argument salt api timeout
  * @param read_timeout http session read timeout
  */
-@NonCPS
-def runSaltCommand(saltId, client, target, function, batch = null, args = null, kwargs = null, timeout = -1, read_timeout = -1) {
 
+def runSaltCommand(saltId, client, target, function, batch = null, args = null, kwargs = null, timeout = -1, read_timeout = -1) {
     data = [
         'tgt': target.expression,
         'fun': function,
@@ -65,9 +66,14 @@ def runSaltCommand(saltId, client, target, function, batch = null, args = null, 
         'expr_form': target.type,
     ]
 
-    if(batch != null){
+    if (batch) {
         batch = batch.toString()
-        if( (batch.isInteger() && batch.toInteger() > 0) || (batch.contains("%"))){
+    } else if (env.getEnvironment().containsKey('SALT_MASTER_OPT_WORKER_THREADS')) {
+        batch = env['SALT_MASTER_OPT_WORKER_THREADS'].toString()
+    }
+
+    if (batch instanceof String) {
+        if ((batch.isInteger() && batch.toInteger() > 0) || (batch.matches(/(\d){1,2}%/))){
             data['client']= "local_batch"
             data['batch'] = batch
         }
@@ -85,6 +91,7 @@ def runSaltCommand(saltId, client, target, function, batch = null, args = null, 
         data['timeout'] = timeout
     }
 
+    def result = [:]
     // Command will be sent using HttpRequest
     if (saltId instanceof HashMap && saltId.containsKey("authToken") ) {
 
@@ -93,13 +100,22 @@ def runSaltCommand(saltId, client, target, function, batch = null, args = null, 
         ]
 
         def http = new com.mirantis.mk.Http()
-        return http.sendHttpPostRequest("${saltId.url}/", data, headers, read_timeout)
+        result = http.sendHttpPostRequest("${saltId.url}/", data, headers, read_timeout)
     } else if (saltId instanceof HashMap) {
         throw new Exception("Invalid saltId")
+    } else {
+        // Command will be sent using Pepper
+        result = runPepperCommand(data, saltId)
     }
 
-    // Command will be sent using Pepper
-    return runPepperCommand(data, saltId)
+    // Convert returned Object to the same structure as from 'local' client to keep compatibility
+    if (data['client'].equals('local_batch')) {
+        def resultMap = ['return': [[:]]]
+        result['return'].each { it -> resultMap['return'][0] = it + resultMap['return'][0] }
+        return resultMap
+    } else {
+        return result
+    }
 }
 
 /**
@@ -107,13 +123,14 @@ def runSaltCommand(saltId, client, target, function, batch = null, args = null, 
  * @param saltId Salt Connection object or pepperEnv (the command will be sent using the selected method)
  * @param target Get pillar target
  * @param pillar pillar name (optional)
+ * @param batch  Batch param to salt (integer or string with percents)
  * @return output of salt command
  */
-def getPillar(saltId, target, pillar = null) {
+def getPillar(saltId, target, pillar = null, batch = null) {
     if (pillar != null) {
-        return runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'pillar.get', null, [pillar.replace('.', ':')])
+        return runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'pillar.get', batch, [pillar.replace('.', ':')])
     } else {
-        return runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'pillar.data')
+        return runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'pillar.data', batch)
     }
 }
 
@@ -122,13 +139,14 @@ def getPillar(saltId, target, pillar = null) {
  * @param saltId Salt Connection object or pepperEnv (the command will be sent using the selected method)
  * @param target Get grain target
  * @param grain grain name (optional)
+ * @param batch Batch param to salt (integer or string with percents)
  * @return output of salt command
  */
-def getGrain(saltId, target, grain = null) {
+def getGrain(saltId, target, grain = null, batch = null) {
     if(grain != null) {
-        return runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'grains.item', null, [grain])
+        return runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'grains.item', batch, [grain])
     } else {
-        return runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'grains.items')
+        return runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'grains.items', batch)
     }
 }
 
@@ -137,10 +155,11 @@ def getGrain(saltId, target, grain = null) {
  * @param saltId Salt Connection object or pepperEnv (the command will be sent using the selected method)
  * @param target Get grain target
  * @param config grain name (optional)
+ * @param batch Batch param to salt (integer or string with percents)
  * @return output of salt command
  */
-def getConfig(saltId, target, config) {
-    return runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'config.get', null, [config.replace('.', ':')], '--out=json')
+def getConfig(saltId, target, config, batch = null) {
+    return runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'config.get', batch, [config.replace('.', ':')], '--out=json')
 }
 
 /**
@@ -207,7 +226,7 @@ def enforceStateWithTest(Map params) {
     if (!params.testTargetMatcher) {
         params.testTargetMatcher = params.target
     }
-    if (testTarget(params.saltId, params.testTargetMatcher)) {
+    if (testTarget(params.saltId, params.testTargetMatcher, params.batch)) {
         return enforceState(params)
     } else {
         if (!params.optional) {
@@ -268,7 +287,7 @@ def enforceState(Map params) {
       kwargs["queue"] = true
     }
 
-    if (params.optional == false || testTarget(params.saltId, params.target)){
+    if (params.optional == false || testTarget(params.saltId, params.target, params.batch)){
         if (params.retries > 0){
             def retriesCounter = 0
             retry(params.retries){
@@ -312,12 +331,13 @@ def enforceState(saltId, target, state, output = true, failOnError = true, batch
  * @param batch salt batch parameter integer or string with percents (optional, default null - disable batch)
  * @param output do you want to print output
  * @param saltArgs additional salt args eq. ["runas=aptly"]
+ * @param replacing list with maps for deletion in info message (passwords, logins, etc)
  * @return output of salt command
  */
-def cmdRun(saltId, target, cmd, checkResponse = true, batch=null, output = true, saltArgs = []) {
+def cmdRun(saltId, target, cmd, checkResponse = true, batch=null, output = true, saltArgs = [], replacing = []) {
     def common = new com.mirantis.mk.Common()
     def originalCmd = cmd
-    common.infoMsg("Running command ${cmd} on ${target}")
+    common.infoSensitivityMsg("Running command ${cmd} on ${target}", true, replacing)
     if (checkResponse) {
       cmd = cmd + " && echo Salt command execution success"
     }
@@ -426,7 +446,7 @@ def minionPresent(saltId, target, minion_name, waitUntilPresent = true, batch=nu
  * @return output of salt command
  */
 def minionsPresent(saltId, target = 'I@salt:master', target_minions = '', waitUntilPresent = true, batch=null, output = true, maxRetries = 200, answers = 1) {
-    def target_hosts = getMinionsSorted(saltId, target_minions)
+    def target_hosts = getMinionsSorted(saltId, target_minions, batch)
     for (t in target_hosts) {
         def tgt = stripDomainName(t)
         minionPresent(saltId, target, tgt, waitUntilPresent, batch, output, maxRetries, answers)
@@ -458,31 +478,44 @@ def minionsPresentFromList(saltId, target = 'I@salt:master', target_minions = []
  * You can call this function when salt-master already contains salt keys of the target_nodes
  * @param saltId Salt Connection object or pepperEnv (the command will be sent using the selected method)
  * @param target Should always be salt-master
- * @param target_nodes unique identification of a minion or group of salt minions
+ * @param targetNodes unique identification of a minion or group of salt minions
  * @param batch salt batch parameter integer or string with percents (optional, default null - disable batch)
- * @param wait timeout for the salt command if minions do not return (default 10)
+ * @param cmdTimeout timeout for the salt command if minions do not return (default 10)
  * @param maxRetries finite number of iterations to check status of a command (default 200)
  * @return output of salt command
  */
-def minionsReachable(saltId, target, target_nodes, batch=null, wait = 10, maxRetries = 200) {
+
+def minionsReachable(saltId, target, targetNodes, batch=null, cmdTimeout = 10, maxRetries = 200) {
     def common = new com.mirantis.mk.Common()
-    def cmd = "salt -t${wait} -C '${target_nodes}' test.ping"
-    common.infoMsg("Checking if all ${target_nodes} minions are reachable")
-    def count = 0
-    while(count < maxRetries) {
+    def cmd = "salt -t${cmdTimeout} -C '${targetNodes}' test.ping"
+    common.infoMsg("Checking if all ${targetNodes} minions are reachable")
+    def retriesCount = 0
+    while(retriesCount < maxRetries) {
         Calendar timeout = Calendar.getInstance();
-        timeout.add(Calendar.SECOND, wait);
-        def out = runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'cmd.shell', batch, [cmd], null, wait)
+        timeout.add(Calendar.SECOND, cmdTimeout);
+        def out = runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'cmd.shell', batch, [cmd], null, cmdTimeout)
         Calendar current = Calendar.getInstance();
         if (current.getTime().before(timeout.getTime())) {
-           printSaltCommandResult(out)
-           return out
+            common.infoMsg("Successful response received from all targeted nodes.")
+            printSaltCommandResult(out)
+            return out
         }
-        common.infoMsg("Not all of the targeted '${target_nodes}' minions returned yet. Waiting ...")
-        count++
+        def outYaml = readYaml text: getReturnValues(out)
+        def successfulNodes = []
+        def failedNodes = []
+        for (node in outYaml.keySet()) {
+            if (outYaml[node] == true || outYaml[node].toString().toLowerCase() == 'true') {
+                successfulNodes.add(node)
+            } else {
+                failedNodes.add(node)
+            }
+        }
+        common.infoMsg("Not all of the targeted minions returned yet. Successful response from ${successfulNodes}. Still waiting for ${failedNodes}.")
+        retriesCount++
         sleep(time: 500, unit: 'MILLISECONDS')
     }
 }
+
 
 /**
  * You can call this function when need to check that all minions are available, free and ready for command execution
@@ -504,16 +537,54 @@ def checkTargetMinionsReady(LinkedHashMap config) {
     def retries = config.get('retries', 10)
     def timeout = config.get('timeout', 5)
     def checkAvailability = config.get('availability', true)
+    def batch = config.get('batch', null)
     common.retry(retries, wait) {
         if (checkAvailability) {
-            minionsReachable(saltId, 'I@salt:master', target_reachable)
+            minionsReachable(saltId, 'I@salt:master', target_reachable, batch)
         }
-        def running = runSaltProcessStep(saltId, target, 'saltutil.running', [], null, true, timeout)
+        def running = runSaltProcessStep(saltId, target, 'saltutil.running', [], batch, true, timeout)
         for (value in running.get("return")[0].values()) {
             if (value != []) {
                 throw new Exception("Not all salt-minions are ready for execution")
             }
         }
+    }
+}
+
+/**
+ * Restart and wait for salt-minions on target nodes.
+ * @param saltId Salt Connection object or pepperEnv (the command will be sent using the selected method)
+ * @param target unique identification of a minion or group of salt minions
+ * @param wait timeout for the salt command if minions do not return (default 10)
+ * @param maxRetries finite number of iterations to check status of a command (default 15)
+ * @param async Run salt minion restart and do not wait for response
+ * @return output of salt command
+ */
+def restartSaltMinion(saltId, target, wait = 10, maxRetries = 15, async = true) {
+    def common = new com.mirantis.mk.Common()
+    common.infoMsg("Restarting salt-minion on ${target} and waiting for they are reachable.")
+    runSaltProcessStep(saltId, target, 'cmd.shell', ['salt-call service.restart salt-minion'], null, true, 60, null, async)
+    checkTargetMinionsReady(['saltId': saltId, 'target': target, timeout: wait, retries: maxRetries])
+    common.infoMsg("All ${target} minions are alive...")
+}
+
+/**
+ * Upgrade package and restart salt minion.
+ * @param saltId Salt Connection object or pepperEnv (the command will be sent using the selected method)
+ * @param target unique identification of a minion or group of salt minions
+ * @param the name of pkg_name to upgrade
+ * @param wait timeout for the salt command if minions do not return (default 5)
+ * @param maxRetries finite number of iterations to check status of a command (default 10)
+ * @return output of salt command
+ */
+def upgradePackageAndRestartSaltMinion(saltId, target, pkg_name, wait = 5, maxRetries = 10) {
+    def common = new com.mirantis.mk.Common()
+    def latest_version = getReturnValues(runSaltProcessStep(saltId, target, 'pkg.latest_version', [pkg_name, 'show_installed=True'])).split('\n')[0]
+    def current_version = getReturnValues(runSaltProcessStep(saltId, target, 'pkg.version', [pkg_name])).split('\n')[0]
+    if (current_version && latest_version != current_version) {
+        common.infoMsg("Upgrading current ${pkg_name}: ${current_version} to ${latest_version}")
+        runSaltProcessStep(saltId, target, 'pkg.install', [pkg_name], 'only_upgrade=True')
+        restartSaltMinion(saltId, target, wait, maxRetries)
     }
 }
 
@@ -603,10 +674,11 @@ def commandStatus(saltId, target, cmd, correct_state='running', find = true, wai
  * Perform complete salt sync between master and target
  * @param saltId Salt Connection object or pepperEnv (the command will be sent using the selected method)
  * @param target Get pillar target
+ * @param batch Batch param to salt (integer or string with percents)
  * @return output of salt command
  */
-def syncAll(saltId, target) {
-    return runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'saltutil.sync_all')
+def syncAll(saltId, target, batch = null) {
+    return runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'saltutil.sync_all', batch)
 }
 
 /**
@@ -614,12 +686,13 @@ def syncAll(saltId, target) {
  * Method will call saltutil.refresh_pillar, saltutil.refresh_grains and saltutil.sync_all
  * @param saltId Salt Connection object or pepperEnv (the command will be sent using the selected method)
  * @param target Get pillar target
+ * @param batch Batch param to salt (integer or string with percents)
  * @return output of salt command
  */
-def fullRefresh(saltId, target){
-    runSaltProcessStep(saltId, target, 'saltutil.refresh_pillar', [], null, true)
-    runSaltProcessStep(saltId, target, 'saltutil.refresh_grains', [], null, true)
-    runSaltProcessStep(saltId, target, 'saltutil.sync_all', [], null, true)
+def fullRefresh(saltId, target, batch=20){
+    runSaltProcessStep(saltId, target, 'saltutil.refresh_pillar', [], batch, true)
+    runSaltProcessStep(saltId, target, 'saltutil.refresh_grains', [], batch, true)
+    runSaltProcessStep(saltId, target, 'saltutil.sync_all', [], batch, true)
 }
 
 /**
@@ -660,10 +733,11 @@ def enforceHighstate(saltId, target, output = false, failOnError = true, batch =
  * Get running minions IDs according to the target
  * @param saltId Salt Connection object or pepperEnv (the command will be sent using the selected method)
  * @param target Get minions target
+ * @param batch Batch param to salt (integer or string with percents)
  * @return list of active minions fitin
  */
-def getMinions(saltId, target) {
-    def minionsRaw = runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'test.ping')
+def getMinions(saltId, target, batch = null) {
+    def minionsRaw = runSaltCommand(saltId, 'local', ['expression': target, 'type': 'compound'], 'test.ping', batch)
     return new ArrayList<String>(minionsRaw['return'][0].keySet())
 }
 
@@ -671,20 +745,22 @@ def getMinions(saltId, target) {
  * Get sorted running minions IDs according to the target
  * @param saltId Salt Connection object or pepperEnv
  * @param target Get minions target
+ * @param batch Batch param to salt (integer or string with percents)
  * @return list of sorted active minions fitin
  */
-def getMinionsSorted(saltId, target) {
-    return getMinions(saltId, target).sort()
+def getMinionsSorted(saltId, target, batch = null) {
+    return getMinions(saltId, target, batch).sort()
 }
 
 /**
  * Get first out of running minions IDs according to the target
  * @param saltId Salt Connection object or pepperEnv
  * @param target Get minions target
+ * @param batch Batch param to salt (integer or string with percents)
  * @return first of active minions fitin
  */
-def getFirstMinion(saltId, target) {
-    def minionsSorted = getMinionsSorted(saltId, target)
+def getFirstMinion(saltId, target, batch = null) {
+    def minionsSorted = getMinionsSorted(saltId, target, batch)
     return minionsSorted[0]
 }
 
@@ -692,10 +768,11 @@ def getFirstMinion(saltId, target) {
  * Get running salt minions IDs without it's domain name part and its numbering identifications
  * @param saltId Salt Connection object or pepperEnv
  * @param target Get minions target
+ * @param batch Batch param to salt (integer or string with percents)
  * @return list of active minions fitin without it's domain name part name numbering
  */
-def getMinionsGeneralName(saltId, target) {
-    def minionsSorted = getMinionsSorted(saltId, target)
+def getMinionsGeneralName(saltId, target, batch = null) {
+    def minionsSorted = getMinionsSorted(saltId, target, batch)
     return stripDomainName(minionsSorted[0]).replaceAll('\\d+$', "")
 }
 
@@ -723,7 +800,7 @@ def stripDomainName(name) {
  * @return Return values of a salt command
  */
 def getReturnValues(output) {
-    if(output.containsKey("return") && !output.get("return").isEmpty()) {
+    if(output && output.containsKey("return") && !output.get("return").isEmpty()) {
         return output['return'][0].values()[0]
     }
     def common = new com.mirantis.mk.Common()
@@ -766,11 +843,12 @@ def getNodeProvider(saltId, nodeName) {
  * Test if there are any minions to target
  * @param saltId Salt Connection object or pepperEnv (the command will be sent using the selected method)
  * @param target Target to test
+ * @param batch Batch param to salt (integer or string with percents)
  * @return bool indicating if target was succesful
  */
 
-def testTarget(saltId, target) {
-    return getMinions(saltId, target).size() > 0
+def testTarget(saltId, target, batch = null) {
+    return getMinions(saltId, target, batch).size() > 0
 }
 
 /**
@@ -779,10 +857,11 @@ def testTarget(saltId, target) {
  * @param target Key generating target
  * @param host Key generating host
  * @param keysize generated key size (optional, default 4096)
+ * @param batch Batch param to salt (integer or string with percents)
  * @return output of salt command
  */
-def generateNodeKey(saltId, target, host, keysize = 4096) {
-    return runSaltCommand(saltId, 'wheel', target, 'key.gen_accept', [host], ['keysize': keysize])
+def generateNodeKey(saltId, target, host, keysize = 4096, batch = null) {
+    return runSaltCommand(saltId, 'wheel', target, 'key.gen_accept', batch, [host], ['keysize': keysize])
 }
 
 /**
@@ -792,10 +871,11 @@ def generateNodeKey(saltId, target, host, keysize = 4096) {
  * @param host Metadata generating host
  * @param classes Reclass classes
  * @param parameters Reclass parameters
+ * @param batch Batch param to salt (integer or string with percents)
  * @return output of salt command
  */
-def generateNodeMetadata(saltId, target, host, classes, parameters) {
-    return runSaltCommand(saltId, 'local', target, 'reclass.node_create', [host, '_generated'], ['classes': classes, 'parameters': parameters])
+def generateNodeMetadata(saltId, target, host, classes, parameters, batch = null) {
+    return runSaltCommand(saltId, 'local', target, 'reclass.node_create', batch, [host, '_generated'], ['classes': classes, 'parameters': parameters])
 }
 
 /**
@@ -804,14 +884,15 @@ def generateNodeMetadata(saltId, target, host, classes, parameters) {
  * @param target Orchestration target
  * @param orchestrate Salt orchestrate params
  * @param kwargs Salt orchestrate params
+ * @param batch Batch param to salt (integer or string with percents)
  * @return output of salt command
  */
-def orchestrateSystem(saltId, target, orchestrate=[], kwargs = null) {
+def orchestrateSystem(saltId, target, orchestrate=[], kwargs = null, batch = null) {
     //Since the runSaltCommand uses "arg" (singular) for "runner" client this won`t work correctly on old salt 2016
     //cause this version of salt used "args" (plural) for "runner" client, see following link for reference:
     //https://github.com/saltstack/salt/pull/32938
     def common = new com.mirantis.mk.Common()
-    def result = runSaltCommand(saltId, 'runner', target, 'state.orchestrate', true, orchestrate, kwargs, 7200, 7200)
+    def result = runSaltCommand(saltId, 'runner', target, 'state.orchestrate', batch, orchestrate, kwargs, 7200, 7200)
         if(result != null){
             if(result['return']){
                 def retcode = result['return'][0].get('retcode')
@@ -834,21 +915,21 @@ def orchestrateSystem(saltId, target, orchestrate=[], kwargs = null) {
  * @param  saltId       Salt Connection object or pepperEnv (the command will be sent using the selected method)
  * @param  pillar_tree  Reclass pillar that has orchestrate pillar for desired stage
  * @param  extra_tgt    Extra targets for compound
- *
+ * @param batch Batch param to salt (integer or string with percents)
  * @return              output of salt command
  */
-def orchestratePrePost(saltId, pillar_tree, extra_tgt = '') {
+def orchestratePrePost(saltId, pillar_tree, extra_tgt = '', batch = null) {
 
     def common = new com.mirantis.mk.Common()
     def salt = new com.mirantis.mk.Salt()
     def compound = 'I@' + pillar_tree + " " + extra_tgt
 
     common.infoMsg("Refreshing pillars")
-    runSaltProcessStep(saltId, '*', 'saltutil.refresh_pillar', [], null, true)
+    runSaltProcessStep(saltId, '*', 'saltutil.refresh_pillar', [], batch, true)
 
     common.infoMsg("Looking for orchestrate pillars")
-    if (salt.testTarget(saltId, compound)) {
-        for ( node in salt.getMinionsSorted(saltId, compound) ) {
+    if (salt.testTarget(saltId, compound, batch)) {
+        for ( node in salt.getMinionsSorted(saltId, compound, batch) ) {
             def pillar = salt.getPillar(saltId, node, pillar_tree)
             if ( !pillar['return'].isEmpty() ) {
                 for ( orch_id in pillar['return'][0].values() ) {
@@ -856,7 +937,7 @@ def orchestratePrePost(saltId, pillar_tree, extra_tgt = '') {
                     def orch_enabled = orch_id.values()['enabled']
                     if ( orch_enabled ) {
                         common.infoMsg("Orchestrating: ${orchestrator}")
-                        salt.printSaltCommandResult(salt.orchestrateSystem(saltId, ['expression': node], [orchestrator]))
+                        salt.printSaltCommandResult(salt.orchestrateSystem(saltId, ['expression': node], [orchestrator], null, batch))
                     }
                 }
             }
@@ -870,20 +951,20 @@ def orchestratePrePost(saltId, pillar_tree, extra_tgt = '') {
  * @param tgt Salt process step target
  * @param fun Salt process step function
  * @param arg process step arguments (optional, default [])
- * @param batch salt batch parameter integer or string with percents (optional, default null - disable batch)
+ * @param batch salt batch parameter integer or string with percents (optional, default null - disable batch). Can't be used with async
  * @param output print output (optional, default true)
  * @param timeout  Additional argument salt api timeout
+ * @param async Run the salt command but don't wait for a reply. Can't be used with batch
  * @return output of salt command
  */
-def runSaltProcessStep(saltId, tgt, fun, arg = [], batch = null, output = true, timeout = -1, kwargs = null) {
+def runSaltProcessStep(saltId, tgt, fun, arg = [], batch = null, output = true, timeout = -1, kwargs = null, async = false) {
     def common = new com.mirantis.mk.Common()
     def salt = new com.mirantis.mk.Salt()
     def out
 
     common.infoMsg("Running step ${fun} ${arg} on ${tgt}")
-
-    if (batch == true) {
-        out = runSaltCommand(saltId, 'local_batch', ['expression': tgt, 'type': 'compound'], fun, String.valueOf(batch), arg, kwargs, timeout)
+    if (async == true) {
+        out = runSaltCommand(saltId, 'local_async', ['expression': tgt, 'type': 'compound'], fun, null, arg, kwargs, timeout)
     } else {
         out = runSaltCommand(saltId, 'local', ['expression': tgt, 'type': 'compound'], fun, batch, arg, kwargs, timeout)
     }
@@ -955,7 +1036,7 @@ def checkResult(result, failOnError = true, printResults = true, printOnlyChange
                                             outputResources.add(String.format("Resource: %s\n\u001B[33m%s\u001B[0m", resKey, common.prettify(resource)))
                                         }
                                     }else{
-                                        if(!printOnlyChanges || resource.changes.size() > 0){
+                                        if(!printOnlyChanges || (resource.changes && resource.changes.size() > 0)) {
                                             outputResources.add(String.format("Resource: %s\n\u001B[32m%s\u001B[0m", resKey, common.prettify(resource)))
                                         }
                                     }
@@ -1125,34 +1206,52 @@ def setSaltOverrides(saltId, salt_overrides, reclass_dir="/srv/salt/reclass", ex
 * @param venv   Path to virtualenv with
 */
 
-def runPepperCommand(data, venv)   {
+def runPepperCommand(data, venv) {
     def common = new com.mirantis.mk.Common()
     def python = new com.mirantis.mk.Python()
     def dataStr = new groovy.json.JsonBuilder(data).toString()
+    // TODO(alexz): parametrize?
+    int retry = 10
 
     def pepperCmdFile = "${venv}/pepper-cmd.json"
     writeFile file: pepperCmdFile, text: dataStr
     def pepperCmd = "pepper -c ${venv}/pepperrc --make-token -x ${venv}/.peppercache --json-file ${pepperCmdFile}"
 
-    if (venv) {
-        output = python.runVirtualenvCommand(venv, pepperCmd, true)
-    } else {
-        echo("[Command]: ${pepperCmd}")
-        output = sh (
-            script: pepperCmd,
-            returnStdout: true
-        ).trim()
-    }
-
+    int tries = 0
+    def FullOutput = ['status': 1]
     def outputObj
+    while (tries++ < retry) {
+        try {
+            if (venv) {
+                FullOutput = python.runVirtualenvCommand(venv, pepperCmd, true, true)
+            } else {
+                FullOutput = common.shCmdStatus(pepperCmd)
+            }
+            if (FullOutput['status'] != 0) {
+                error()
+            }
+            break
+        } catch (e) {
+            // Check , if we get failed pepper HTTP call, and retry
+            common.errorMsg("Command: ${pepperCmd} failed to execute with error:\n${FullOutput['stderr']}")
+            if (FullOutput['stderr'].contains('Error with request: HTTP Error 50') || FullOutput['stderr'].contains('Pepper error: Server error')) {
+                common.errorMsg("Pepper HTTP Error detected. Most probably, " +
+                    "master SaltReqTimeoutError in master zmq thread issue...lets retry ${tries}/${retry}")
+                sleep(5)
+                continue
+            }
+        }
+    }
+    // Try to parse json output. No sense to check exit code, since we always expect json answer only.
     try {
-       outputObj = new groovy.json.JsonSlurperClassic().parseText(output)
-    } catch(Exception e) {
-       common.errorMsg("Parsing Salt API JSON response failed! Response: " + output)
-       throw e
+        outputObj = new groovy.json.JsonSlurperClassic().parseText(FullOutput['stdout'])
+    } catch (Exception jsonE) {
+        common.errorMsg('Parsing Salt API JSON response failed! Response: ' + FullOutput)
+        throw jsonE
     }
     return outputObj
 }
+
 
 /**
 * Check time settings on defined nodes, compares them
@@ -1161,10 +1260,11 @@ def runPepperCommand(data, venv)   {
 * @param saltId Salt Connection object or pepperEnv (the command will be sent using the selected method)
 * @param target Targeted nodes to be checked
 * @param diff   Maximum time difference (in seconds) to be accepted during time sync check
+* @param batch Batch param to salt (integer or string with percents)
 * @return bool  Return true if time difference is <= diff and returns false if time difference is > diff
 */
 
-def checkClusterTimeSync(saltId, target) {
+def checkClusterTimeSync(saltId, target, batch = null) {
     def common = new com.mirantis.mk.Common()
     def salt = new com.mirantis.mk.Salt()
 
@@ -1176,7 +1276,7 @@ def checkClusterTimeSync(saltId, target) {
         } else {
             diff = 5
         }
-        out = salt.runSaltProcessStep(saltId, target, 'status.time', '%s')
+        out = salt.runSaltProcessStep(saltId, target, 'status.time', '%s', batch)
         outParsed = out['return'][0]
         def outKeySet = outParsed.keySet()
         for (key in outKeySet) {
@@ -1280,12 +1380,31 @@ def getIostatValues(Map params) {
 
 def isPackageInstalled(Map params) {
     def output = params.get('output', true)
-    def res = runSaltProcessStep(params.saltId, params.target, "pkg.info_installed", params.packageName, null, output)['return'][0]
-    for (int i = 0; i < res.size(); i++) {
-        def key = res.keySet()[i]
-        if (!(res[key] instanceof Map && res[key].containsKey(params.packageName))) {
-            return false
+    def res = runSaltProcessStep(params.saltId, params.target, "pkg.list_pkgs", [], null, output)['return'][0]
+    if (res) {
+        for (int i = 0; i < res.size(); i++) {
+            def key = res.keySet()[i]
+            if (!(res[key] instanceof Map && res[key].get(params.packageName.toString(), false))) {
+                return false
+            }
         }
+        return true
+    } else {
+        return false
     }
-    return true
 }
+
+/**
+* Returns nubmer of worker_threads set for Salt Master
+*
+* @param saltId  Salt Connection object or pepperEnv
+*
+*/
+def getWorkerThreads(saltId) {
+    if (env.getEnvironment().containsKey('SALT_MASTER_OPT_WORKER_THREADS')) {
+        return env['SALT_MASTER_OPT_WORKER_THREADS'].toString()
+    }
+    def threads = cmdRun(saltId, "I@salt:master", "cat /etc/salt/master.d/master.conf | grep worker_threads | cut -f 2 -d ':'", true, null, true)
+    return threads['return'][0].values()[0].replaceAll('Salt command execution success','').trim()
+}
+

@@ -71,6 +71,33 @@ def agentSh(cmd) {
 }
 
 /**
+ * Execute command with ssh-agent with retries and additional options
+ *
+ * @param address address of remote server
+ * @param cmd command to execute
+ * @param user the name of user to execute ssh command with
+ * @param retries number of command retries in case of failure
+ * @param wait delay between retries
+ * @param options additional ssh options
+
+ */
+def executeMachineSshCommand(address, cmd, user = 'ubuntu', retries=5, wait=10, options=null){
+    def common = new com.mirantis.mk.Common()
+    if (!options){
+        options = ['StrictHostKeyChecking': 'no', 'UserKnownHostsFile': '/dev/null']
+    }
+    String optionsString = ''
+    options.each { k,v ->
+        optionsString += "-o ${k}=${v} "
+    }
+
+    common.retry(retries, wait) {
+        return agentSh("ssh ${optionsString} ${user}@${address} '${cmd}'")
+    }
+}
+
+
+/**
  * Setup ssh agent and add private key
  *
  * @param credentialsId Jenkins credentials name to lookup private key
@@ -84,5 +111,26 @@ def prepareSshAgentKey(credentialsId) {
     sh("set +x; echo '${c.getPrivateKey()}' > ~/.ssh/id_rsa_${credentialsId} && chmod 600 ~/.ssh/id_rsa_${credentialsId}; set -x")
     runSshAgentCommand("ssh-add ~/.ssh/id_rsa_${credentialsId}")
 }
+
+/**
+ * Copy files via SCP
+ *
+ * @param source source file
+ * @param destination desination file
+ * @param options additional scp options
+
+ */
+def executeMachineScpCommand(source, destination, options=null){
+    if (!options){
+        options = ['StrictHostKeyChecking': 'no', 'UserKnownHostsFile': '/dev/null']
+    }
+    String optionsString = ''
+    options.each { k,v ->
+        optionsString += "-o ${k}=${v} "
+    }
+
+    agentSh("scp ${optionsString} ${source} ${destination}")
+}
+
 
 return this;

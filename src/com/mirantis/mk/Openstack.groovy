@@ -22,9 +22,9 @@ package com.mirantis.mk
  * @param version     Version of the OpenStack clients
  */
 
-def setupOpenstackVirtualenv(path, version = 'latest') {
-    def python = new com.mirantis.mk.Python()
-    python.setupDocutilsVirtualenv(path)
+def setupOpenstackVirtualenv(path, version = 'latest', python="python2") {
+    def pythonLib = new com.mirantis.mk.Python()
+    pythonLib.setupDocutilsVirtualenv(path)
 
     def openstack_kilo_packages = [
         //XXX: hack to fix https://bugs.launchpad.net/ubuntu/+source/python-pip/+bug/1635463
@@ -41,7 +41,7 @@ def setupOpenstackVirtualenv(path, version = 'latest') {
         'oslo.i18n>=2.3.0,<2.4.0',
         'oslo.serialization>=1.8.0,<1.9.0',
         'oslo.utils>=1.4.0,<1.5.0',
-        'docutils'
+        'docutils==0.16'
     ]
 
     def openstack_latest_packages = [
@@ -58,10 +58,12 @@ def setupOpenstackVirtualenv(path, version = 'latest') {
         'warlock<=1.3.1;python_version=="2.7"',
         'warlock>1.3.1;python_version=="3.4"',
         'warlock>1.3.1;python_version=="3.5"',
-        'python-openstackclient',
-        'python-octaviaclient',
-        'python-heatclient',
-        'docutils'
+        // NOTE: pin client packages to current latest to prevent
+        // downloading packages which are not support Python 2.7
+        'python-openstackclient==4.0.0',
+        'python-octaviaclient==1.11.0',
+        'python-heatclient==1.18.0',
+        'docutils==0.16'
     ]
 
     if (version == 'kilo') {
@@ -73,7 +75,7 @@ def setupOpenstackVirtualenv(path, version = 'latest') {
     } else {
         requirements = openstack_latest_packages
     }
-    python.setupVirtualenv(path, 'python2', requirements, null, true)
+    pythonLib.setupVirtualenv(path, python, requirements, null, true)
 }
 
 /**
@@ -374,6 +376,24 @@ def deleteKeyPair(env, name, path = null) {
     common.infoMsg("Removing key pair ${name}")
     def cmd = "openstack keypair delete ${name}"
     runOpenstackCommand(cmd, env, path)
+}
+
+/**
+ * Check if Nova keypair exists and delete it.
+ *
+ * @param env          Connection parameters for OpenStack API endpoint
+ * @param name         Name of the key pair to delete
+ * @param path         Path to virtualenv
+**/
+def ensureKeyPairRemoved(String name, env, path) {
+    def common = new com.mirantis.mk.Common()
+    def keypairs = runOpenstackCommand("openstack keypair list -f value -c Name", env, path).tokenize('\n')
+    if (name in keypairs) {
+        deleteKeyPair(env, name, path)
+        common.infoMsg("Keypair ${name} has been deleted")
+    } else {
+        common.warningMsg("Keypair ${name} not found")
+    }
 }
 
 /**

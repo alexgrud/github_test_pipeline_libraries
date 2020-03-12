@@ -312,3 +312,151 @@ LinkedHashMap getDependentPatches(LinkedHashMap changeInfo) {
     }
     return dependentPatches
 }
+
+/**
+ * Find Gerrit change(s) according to various input parameters like owner, topic, etc.
+ * @param gerritAuth        A map containing information about Gerrit. Should include
+ *                          HOST, PORT and USER
+ * @param changeParams      Parameters to identify Geriit change e.g.: owner, topic,
+ *                          status, branch, project
+ */
+def findGerritChange(credentialsId, LinkedHashMap gerritAuth, LinkedHashMap changeParams) {
+    scriptText = """
+                 ssh -p ${gerritAuth['PORT']} ${gerritAuth['USER']}@${gerritAuth['HOST']} \
+                 gerrit query \
+                 --format JSON \
+                 """
+    changeParams.each {
+        scriptText += " ${it.key}:${it.value}"
+    }
+    scriptText += " | fgrep -v runTimeMilliseconds || :"
+    sshagent([credentialsId]) {
+        jsonChange = sh(
+             script:scriptText,
+             returnStdout: true,
+           ).trim()
+    }
+    return jsonChange
+}
+
+/**
+ * Download Gerrit review by number
+ *
+ * @param credentialsId            credentials ID
+ * @param virtualenv               virtualenv path
+ * @param repoDir                  repository directory
+ * @param gitRemote                the value of git remote
+ * @param changeNum                the number of change to download
+ */
+def getGerritChangeByNum(credentialsId, virtualEnv, repoDir, gitRemote, changeNum) {
+    def python = new com.mirantis.mk.Python()
+    sshagent([credentialsId]) {
+        dir(repoDir) {
+            python.runVirtualenvCommand(virtualEnv, "git review -r ${gitRemote} -d ${changeNum}")
+        }
+    }
+}
+
+/**
+ * Post Gerrit review
+ * @param credentialsId            credentials ID
+ * @param virtualenv               virtualenv path
+ * @param repoDir                  repository directory
+ * @param gitName                  committer name
+ * @param gitEmail                 committer email
+ * @param gitRemote                the value of git remote
+ * @param gitTopic                 the name of the topic
+ * @param gitBranch                the name of git branch
+ */
+def postGerritReview(credentialsId, virtualEnv, repoDir, gitName, gitEmail, gitRemote, gitTopic, gitBranch) {
+    def python = new com.mirantis.mk.Python()
+    def common = new com.mirantis.mk.Common()
+    def cmdText = """
+                    GIT_COMMITTER_NAME=${gitName} \
+                    GIT_COMMITTER_EMAIL=${gitEmail} \
+                    git review -r ${gitRemote} \
+                    -t ${gitTopic} \
+                    ${gitBranch}
+                  """
+    sshagent([credentialsId]) {
+        dir(repoDir) {
+            res = python.runVirtualenvCommand(virtualEnv, cmdText)
+            common.infoMsg(res)
+        }
+    }
+}
+
+/**
+ * Prepare and upload Gerrit commit from prepared repo
+ * @param LinkedHashMap params dict with parameters
+ *   venvDir - Absolute path to virtualenv dir
+ *   gerritCredentials - credentialsId
+ *   gerritHost - gerrit host
+ *   gerritPort - gerrit port
+ *   repoDir - path to repo dir
+ *   repoProject - repo name
+ *   repoBranch - repo branch
+ *   changeCommitComment - comment for commit message
+ *   changeAuthorName - change author
+ *   changeAuthorEmail - author email
+ *   changeTopic - change topic
+ *   gitRemote - git remote
+ *   returnChangeInfo - whether to return info about uploaded change
+ *
+ * @return map with change info if returnChangeInfo set to true
+*/
+def prepareGerritAutoCommit(LinkedHashMap params) {
+    def common = new com.mirantis.mk.Common()
+    def git = new com.mirantis.mk.Git()
+    String venvDir = params.get('venvDir')
+    String gerritCredentials = params.get('gerritCredentials')
+    String gerritHost = params.get('gerritHost', 'gerrit.mcp.mirantis.net')
+    String gerritPort = params.get('gerritPort', '29418')
+    String gerritUser = common.getCredentialsById(gerritCredentials, 'sshKey').username
+    String repoDir = params.get('repoDir')
+    String repoProject = params.get('repoProject')
+    String repoBranch = params.get('repoBranch', 'master')
+    String changeCommitComment = params.get('changeCommitComment')
+    String changeAuthorName = params.get('changeAuthorName', 'MCP-CI')
+    String changeAuthorEmail = params.get('changeAuthorEmail', 'mcp-ci-jenkins@ci.mcp.mirantis.net')
+    String changeTopic = params.get('changeTopic', 'auto_ci')
+    Boolean returnChangeInfo = params.get('returnChangeInfo', false)
+    String gitRemote = params.get('gitRemote', '')
+    if (! gitRemote) {
+        dir(repoDir) {
+            gitRemote = sh(
+                script:
+                    'git remote -v | head -n1 | cut -f1',
+                    returnStdout: true,
+            ).trim()
+        }
+    }
+    def gerritAuth = ['PORT': gerritPort, 'USER': gerritUser, 'HOST': gerritHost ]
+    def changeParams = ['owner': gerritUser, 'status': 'open', 'project': repoProject, 'branch': repoBranch, 'topic': changeTopic]
+    // find if there is old commit present
+    def gerritChange = findGerritChange(gerritCredentials, gerritAuth, changeParams)
+    def changeId = ''
+    if (gerritChange) {
+        try {
+            def jsonChange = readJSON text: gerritChange
+            changeId = "Change-Id: ${jsonChange['id']}".toString()
+        } catch (Exception error) {
+            common.errorMsg("Can't parse ouput from Gerrit. Check that user ${changeAuthorName} does not have several \
+                open commits to ${repoProject} repo and ${repoBranch} branch with topic ${changeTopic}")
+            throw error
+        }
+    }
+    def commitMessage =
+        """${changeCommitComment}
+
+       |${changeId}
+    """.stripMargin()
+    git.commitGitChanges(repoDir, commitMessage, changeAuthorEmail, changeAuthorName, false)
+    //post change
+    postGerritReview(gerritCredentials, venvDir, repoDir, changeAuthorName, changeAuthorEmail, gitRemote, changeTopic, repoBranch)
+    if (returnChangeInfo) {
+        gerritChange = findGerritChange(gerritCredentials, gerritAuth, changeParams)
+        jsonChange = readJSON text: gerritChange
+        return getGerritChange(gerritUser, gerritHost, jsonChange['number'], gerritCredentials, true)
+    }
+}

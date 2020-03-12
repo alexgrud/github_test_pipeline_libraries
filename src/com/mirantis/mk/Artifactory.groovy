@@ -9,14 +9,15 @@ package com.mirantis.mk
 /**
  * Make generic call using Artifactory REST API and return parsed JSON
  *
- * @param art   Artifactory connection object
- * @param uri   URI which will be appended to artifactory server base URL
+ * @param art       Artifactory connection object
+ * @param uri       URI which will be appended to artifactory server base URL
  * @param method    HTTP method to use (default GET)
  * @param data      JSON data to POST or PUT
  * @param headers   Map of additional request headers
+ * @param prefix    Default prefix "/api"
  */
-def restCall(art, uri, method = 'GET', data = null, headers = [:]) {
-    def connection = new URL("${art.url}/api${uri}").openConnection()
+def restCall(art, uri, method = 'GET', data = null, headers = [:], prefix = '/api') {
+    def connection = new URL("${art.url}${prefix}${uri}").openConnection()
     if (method != 'GET') {
         connection.setRequestMethod(method)
     }
@@ -107,9 +108,9 @@ def restPost(art, uri, data = null) {
 /**
  * Query artifacts by properties
  *
- * @param art   Artifactory connection object
+ * @param art           Artifactory connection object
  * @param properties    String or list of properties in key=value format
- * @param repo  Optional repository to search in
+ * @param repo          Optional repository to search in
  */
 def findArtifactByProperties(art, properties, repo) {
     query = parseProperties(properties)
@@ -393,4 +394,130 @@ def uploadPackageStep(art, file, properties, distribution, component, timestamp)
             timestamp
         )
     }
+}
+
+/**
+ * Get Helm repo for Artifactory
+ *
+ * @param art           Artifactory connection object
+ * @param repoName      Chart repository name
+ */
+def getArtifactoryHelmChartRepoByName(art, repoName){
+    def res
+    def common = new com.mirantis.mk.Common()
+    try {
+        res = restGet(art, "/repositories/${repoName}")
+    } catch (IOException e) {
+        def error = e.message.tokenize(':')[1]
+        if (error.contains(' 400 for URL') || error.contains(' 404 for URL')) {
+            common.warningMsg("No projects found for the pattern ${repoName} error code ${error}")
+        }else {
+            throw e
+        }
+    }
+    return res
+}
+
+/**
+ * Get repo by packageType for Artifactory
+ *
+ * @param art           Artifactory connection object
+ * @param packageType   Repository package type
+ */
+def getArtifactoryRepoByPackageType(art, repoName){
+    return restGet(art, "/repositories?${packageType}")
+}
+
+/**
+ * Get checksums of artifact
+ *
+ * @param art           Artifactory connection object
+ * @param artifactName  Artifactory object name
+ * @param checksum      Type of checksum (default md5)
+ * @param repoName      Artifact repository name
+ */
+
+def getArtifactChecksum(art, repoName, artifactName, checksum = 'md5'){
+    def artifactory = new com.mirantis.mk.Artifactory()
+    def uri = "/storage/${repoName}/${artifactName}"
+    def output = artifactory.restGet(art, uri)
+    return output['checksums']["${checksum}"]
+}
+
+/**
+ * Create Helm repo for Artifactory
+ *
+ * @param art           Artifactory connection object
+ * @param repoName      Chart repository name
+ * @param data          Transmitted data
+ */
+def createArtifactoryChartRepo(art, repoName){
+    return restPut(art, "/repositories/${repoName}", '{"rclass": "local","handleSnapshots": false,"packageType": "helm"}')
+}
+
+/**
+ * Delete Helm repo for Artifactory
+ *
+ * @param art           Artifactory connection object
+ * @param repoName      Chart repository name
+ */
+def deleteArtifactoryChartRepo(art, repoName){
+    return restDelete(art, "/repositories/${repoName}")
+}
+
+/**
+ * Publish Helm chart to Artifactory
+ *
+ * @param art           Artifactory connection object from artifactory jenkins plugin
+ * @param repoName      Repository Chart name
+ * @param chartPattern  Chart pattern for publishing
+ */
+def publishArtifactoryHelmChart(art, repoName, chartPattern){
+    def uploadSpec = """{
+                "files": [
+                   {
+                       "pattern": "${chartPattern}",
+                       "target": "${repoName}/"
+                    }
+                ]
+            }"""
+    art.upload spec: uploadSpec
+}
+
+/**
+ * Create Helm repo for Artifactory
+ *
+ * @param art           Artifactory connection object
+ * @param repoName      Repository Chart name
+ * @param chartName     Chart name
+ */
+def deleteArtifactoryHelmChart(art, repoName, chartName){
+    return restDelete(art, "/repositories/${repoName}", "${chartName}")
+}
+
+/**
+ * Get (recursively) list of all files in repo
+ *
+ * @param art           Artifactory connection object
+ * @param repoName      Repository name
+ * @param path          Folder path
+ *
+ * @return              List of paths to files in given repo and folder
+ */
+def getRepoFiles(art, repoName, path = '') {
+  List result = []
+  def response = restGet(art, "/storage/${repoName}/${path}")
+  List children = response.get('children', [])
+  // remove '/' to form more safe-looking path
+  path = path.replaceAll('/$', '')
+  for (child in children) {
+    // remove '/' to form more safe-looking path
+    String childUri = child['uri'].replaceAll('^/', '')
+    if (child['folder'].toBoolean()) {
+      result += getRepoFiles(art, repoName, "${path}/${childUri}")
+    } else {
+      result.add("${path}/${childUri}")
+    }
+  }
+  return result
 }
