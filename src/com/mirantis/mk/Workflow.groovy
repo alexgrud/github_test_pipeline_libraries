@@ -18,6 +18,32 @@ package com.mirantis.mk
 
 
 /**
+ * Get Jenkins parameter names, values and types from jobName
+ * @param jobName job name
+ * @return Map with parameter names as keys and the following map as values:
+ *  [
+ *    <str name1>: [type: <str cls1>, use_variable: <str name1>, defaultValue: <cls value1>],
+ *    <str name2>: [type: <str cls2>, use_variable: <str name2>, defaultValue: <cls value2>],
+ *  ]
+ */
+def getJobDefaultParameters(jobName) {
+    def jenkinsUtils = new com.mirantis.mk.JenkinsUtils()
+    def item = jenkinsUtils.getJobByName(env.JOB_NAME)
+    def parameters = [:]
+    def prop = item.getProperty(ParametersDefinitionProperty.class)
+    if(prop != null) {
+        for(param in prop.getParameterDefinitions()) {
+            def defaultParam = param.getDefaultParameterValue()
+            def cls = defaultParam.getClass().getName()
+            def value = defaultParam.getValue()
+            def name = defaultParam.getName()
+            parameters[name] = [type: cls, use_variable: name, defaultValue: value]
+        }
+    }
+    return parameters
+}
+
+/**
  * Run a Jenkins job using the collected parameters
  *
  * @param job_name          Name of the running job
@@ -87,17 +113,32 @@ def runJob(job_name, job_parameters, global_variables, Boolean propagate = false
  *                          will be empty.
  *
  */
-def storeArtifacts(build_url, step_artifacts, global_variables) {
+def storeArtifacts(build_url, step_artifacts, global_variables, job_name, build_num) {
+    def common = new com.mirantis.mk.Common()
     def http = new com.mirantis.mk.Http()
-    def base = [:]
-    base["url"] = build_url
-    def job_config = http.restGet(base, "/api/json/")
+    def baseJenkins = [:]
+    def baseArtifactory = [:]
+    build_url = build_url.replaceAll(~/\/+$/, "")
+    artifactory_url = "https://artifactory.mcp.mirantis.net/api/storage/si-local/jenkins-job-artifacts"
+    baseArtifactory["url"] = artifactory_url + "/${job_name}/${build_num}"
+
+    baseJenkins["url"] = build_url
+    def job_config = http.restGet(baseJenkins, "/api/json/")
     def job_artifacts = job_config['artifacts']
     for (artifact in step_artifacts) {
-        def job_artifact = job_artifacts.findAll { item -> artifact.value == item['fileName'] || artifact.value == item['relativePath'] }
+        try {
+            artifactoryResp = http.restGet(baseArtifactory, "/${artifact.value}")
+            global_variables[artifact.key] = artifactoryResp.downloadUri
+            println "Artifact URL ${artifactoryResp.downloadUri} stored to ${artifact.key}"
+            continue
+        } catch (Exception e) {
+            common.warningMsg("Can't find an artifact in ${artifactory_url}/${job_name}/${build_num}/${artifact.value} error code ${e.message}")
+        }
+
+        job_artifact = job_artifacts.findAll { item -> artifact.value == item['fileName'] || artifact.value == item['relativePath'] }
         if (job_artifact.size() == 1) {
             // Store artifact URL
-            def artifact_url = "${build_url}artifact/${job_artifact[0]['relativePath']}"
+            def artifact_url = "${build_url}/artifact/${job_artifact[0]['relativePath']}"
             global_variables[artifact.key] = artifact_url
             println "Artifact URL ${artifact_url} stored to ${artifact.key}"
         } else if (job_artifact.size() > 1) {
@@ -105,12 +146,77 @@ def storeArtifacts(build_url, step_artifacts, global_variables) {
             error "Multiple artifacts ${artifact.value} for ${artifact.key} found in the build results ${build_url}, expected one:\n${job_artifact}"
         } else {
             // Warning: no artifact with expected name
-            println "Artifact ${artifact.value} for ${artifact.key} not found in the build results ${build_url}, found the following artifacts:\n${job_artifacts}"
+            println "Artifact ${artifact.value} for ${artifact.key} not found in the build results ${build_url} and in the artifactory ${artifactory_url}/${job_name}/${build_num}/, found the following artifacts in Jenkins:\n${job_artifacts}"
             global_variables[artifact.key] = ''
         }
     }
 }
 
+/**
+ * Update workflow job build description
+ *
+ * @param jobs_data               Map with all job names and result statuses, to showing it in description
+ */
+def updateDescription(jobs_data) {
+    table = ''
+    child_jobs_description = '<strong>Descriptions from jobs:</strong><br>'
+    table_template_start = "<div><table style='border: solid 1px;'><tr><th>Job:</th><th>Status:</th></tr>"
+    table_template_end = "</table></div>"
+
+    for (jobdata in jobs_data) {
+        // Grey background for 'finally' jobs in list
+        if (jobdata['type'] == 'finally') {
+            trstyle = "<tr style='background: #DDDDDD;'>"
+        } else {
+            trstyle = "<tr>"
+        }
+
+        // 'description' instead of job name if it exists
+        if(jobdata['desc'].toString() != "") {
+            display_name = jobdata['desc']
+        } else {
+            display_name = jobdata['name']
+        }
+
+        // Attach url for already builded jobs
+        if(jobdata['build_url'] != "0") {
+            build_url = "<a href=${jobdata['build_url']}>$display_name</a>"
+        } else {
+            build_url = display_name
+        }
+
+        // Styling the status of job result
+        switch(jobdata['status'].toString()) {
+            case "SUCCESS":
+                status_style = "<td style='color: green;'><img src='/images/16x16/blue.png' alt='SUCCESS'>"
+                break
+            case "UNSTABLE":
+                status_style = "<td style='color: #FF5733;'><img src='/images/16x16/yellow.png' alt='UNSTABLE'>"
+                break
+            case "ABORTED":
+                status_style = "<td style='color: red;'><img src='/images/16x16/aborted.png' alt='ABORTED'>"
+                break
+            case "NOT_BUILT":
+                status_style = "<td style='color: red;'><img src='/images/16x16/aborted.png' alt='NOT_BUILT'>"
+                break
+            case "FAILURE":
+                status_style = "<td style='color: red;'><img src='/images/16x16/red.png' alt='FAILURE'>"
+                break
+            default:
+                status_style = "<td>-"
+        }
+
+        // Collect table
+        table += "$trstyle<td>$build_url</td>$status_style</td></tr>"
+
+        // Collecting descriptions of builded child jobs
+        if (jobdata['child_desc'] != "") {
+            child_jobs_description += "<b><small><a href=${jobdata['build_url']}>- ${jobdata['name']} (${jobdata['status']}):</a></small></b><br>"
+            child_jobs_description += "<small>${jobdata['child_desc']}</small><br>"
+        }
+    }
+    currentBuild.description = table_template_start + table + table_template_end + child_jobs_description
+}
 
 /**
  * Run the workflow or final steps one by one
@@ -118,42 +224,73 @@ def storeArtifacts(build_url, step_artifacts, global_variables) {
  * @param steps                   List of steps (Jenkins jobs) to execute
  * @param global_variables        Map where the collected artifact URLs and 'env' objects are stored
  * @param failed_jobs             Map with failed job names and result statuses, to report it later
+ * @param jobs_data               Map with all job names and result statuses, to showing it in description
+ * @param step_id                 Counter for matching step ID with cell ID in description table
  * @param propagate               Boolean. If false: allows to collect artifacts after job is finished, even with FAILURE status
  *                                If true: immediatelly fails the pipeline. DO NOT USE 'true' with runScenario().
  */
-def runSteps(steps, global_variables, failed_jobs, Boolean propagate = false) {
+def runSteps(steps, global_variables, failed_jobs, jobs_data, step_id, Boolean propagate = false) {
+    // Show expected jobs list in description
+    updateDescription(jobs_data)
+
     for (step in steps) {
         stage("Running job ${step['job']}") {
-
+            def engine = new groovy.text.GStringTemplateEngine()
+            def desc = step['description'] ?: ''
             def job_name = step['job']
-            def job_parameters = step['parameters']
+            def job_parameters = [:]
+            def step_parameters = step['parameters'] ?: [:]
+            if (step['inherit_parent_params'] ?: false) {
+                // add parameters from the current job for the child job
+                job_parameters << getJobDefaultParameters(env.JOB_NAME)
+            }
+            // add parameters from the workflow for the child job
+            job_parameters << step_parameters
+
             // Collect job parameters and run the job
             def job_info = runJob(job_name, job_parameters, global_variables, propagate)
             def job_result = job_info.getResult()
             def build_url = job_info.getAbsoluteUrl()
             def build_description = job_info.getDescription()
+            def build_id = job_info.getId()
 
-            currentBuild.description += "<a href=${build_url}>${job_name}</a>: ${job_result}<br>"
-            // Import the remote build description into the current build
-            if (build_description) { // TODO -  add also the job status
-                currentBuild.description += build_description
+            // Update jobs_data for updating description
+            jobs_data[step_id]['build_url'] = build_url
+            jobs_data[step_id]['status'] = job_result
+            jobs_data[step_id]['desc'] = engine.createTemplate(desc).make(global_variables)
+            if (build_description) {
+                jobs_data[step_id]['child_desc'] = build_description
             }
 
-            // Store links to the resulting artifacts into 'global_variables'
-            storeArtifacts(build_url, step['artifacts'], global_variables)
+            updateDescription(jobs_data)
 
-            // Job failed, fail the build or keep going depending on 'ignore_failed' flag
-            if (job_result != "SUCCESS") {
-                def job_ignore_failed = step['ignore_failed'] ?: false
-                failed_jobs[build_url] = job_result
-                if (job_ignore_failed) {
-                    println "Job ${build_url} finished with result: ${job_result}"
-                } else {
+            // Store links to the resulting artifacts into 'global_variables'
+            storeArtifacts(build_url, step['artifacts'], global_variables, job_name, build_id)
+
+            // Check job result, in case of SUCCESS, move to next step.
+            // In case job has status NOT_BUILT, fail the build or keep going depending on 'ignore_not_built' flag
+            // In other cases check flag ignore_failed, if true ignore any statuses and keep going.
+            if (job_result != 'SUCCESS'){
+                def ignoreStepResult = false
+                switch(job_result) {
+                    // In cases when job was waiting too long in queue or internal job logic allows to skip building,
+                    // job may have NOT_BUILT status. In that case ignore_not_built flag can be used not to fail scenario.
+                    case "NOT_BUILT":
+                        ignoreStepResult = step['ignore_not_built'] ?: false
+                        break;
+                    default:
+                        ignoreStepResult = step['ignore_failed'] ?: false
+                        failed_jobs[build_url] = job_result
+                }
+                if (!ignoreStepResult) {
                     currentBuild.result = job_result
                     error "Job ${build_url} finished with result: ${job_result}"
-                }
-            } // if (job_result == "SUCCESS")
+                } // if (!ignoreStepResult)
+            } // if (job_result != 'SUCCESS')
+            println "Job ${build_url} finished with result: ${job_result}"
         } // stage ("Running job ${step['job']}")
+    // Jump to next ID for updating next job data in description table
+    step_id++
     } // for (step in scenario['workflow'])
 }
 
@@ -172,6 +309,7 @@ def runSteps(steps, global_variables, failed_jobs, Boolean propagate = false) {
  *     workflow:
  *     - job: deploy-kaas
  *       ignore_failed: false
+ *       description: "Management cluster ${KAAS_VERSION}"
  *       parameters:
  *         KAAS_VERSION:
  *           type: StringParameterValue
@@ -180,8 +318,19 @@ def runSteps(steps, global_variables, failed_jobs, Boolean propagate = false) {
  *         KUBECONFIG_ARTIFACT: artifacts/management_kubeconfig
  *         DEPLOYED_KAAS_VERSION: artifacts/management_version
  *
- *     - job: test-kaas-ui
+ *     - job: create-child
+ *       inherit_parent_params: true
  *       ignore_failed: false
+ *       parameters:
+ *         KUBECONFIG_ARTIFACT_URL:
+ *           type: StringParameterValue
+ *           use_variable: KUBECONFIG_ARTIFACT
+ *         KAAS_VERSION:
+ *           type: StringParameterValue
+ *           get_variable_from_url: DEPLOYED_KAAS_VERSION
+ *
+ *     - job: test-kaas-ui
+ *       ignore_not_built: false
  *       parameters:
  *         KUBECONFIG_ARTIFACT_URL:
  *           type: StringParameterValue
@@ -207,9 +356,16 @@ def runSteps(steps, global_variables, failed_jobs, Boolean propagate = false) {
  *
  *     runScenario(scenario)
  *
+ * Scenario workflow keys:
+ *
+ *   job: string. Jenkins job name
+ *   ignore_failed: bool. if true, keep running the workflow jobs if the job is failed, but fail the workflow at finish
+ *   ignore_not_built: bool. if true, keep running the workflow jobs if the job set own status to NOT_BUILT, do not fail the workflow at finish for such jobs
+ *   inherit_parent_params: bool. if true, provide all parameters from the parent job to the child job as defaults
+ *   parameters: dict. parameters name and type to inherit from parent to child job, or from artifact to child job
  */
 
-def runScenario(scenario) {
+def runScenario(scenario, slackReportChannel = '') {
 
     // Clear description before adding new messages
     currentBuild.description = ''
@@ -217,10 +373,36 @@ def runScenario(scenario) {
     global_variables = [:]
     // List of failed jobs to show at the end
     failed_jobs = [:]
+    // Jobs data to use for wf job build description
+    def jobs_data = []
+    // Counter for matching step ID with cell ID in description table
+    step_id = 0
+
+    // Generate expected list jobs for description
+    list_id = 0
+    for (step in scenario['workflow']) {
+        if(step['description'] != null && step['description'].toString() != "") {
+            display_name = step['description']
+        } else {
+            display_name = step['job']
+        }
+        jobs_data.add([list_id: "$list_id", type: "workflow", name: "$display_name", build_url: "0", status: "-", desc: "", child_desc: ""])
+        list_id += 1
+    }
+    finally_step_id = list_id
+    for (step in scenario['finally']) {
+        if(step['description'] != null && step['description'].toString() != "") {
+            display_name = step['description']
+        } else {
+            display_name = step['job']
+        }
+        jobs_data.add([list_id: "$list_id", type: "finally", name: "$display_name", build_url: "0", status: "-", desc: "", child_desc: ""])
+        list_id += 1
+    }
 
     try {
         // Run the 'workflow' jobs
-        runSteps(scenario['workflow'], global_variables, failed_jobs)
+        runSteps(scenario['workflow'], global_variables, failed_jobs, jobs_data, step_id)
 
     } catch (InterruptedException x) {
         error "The job was aborted"
@@ -229,8 +411,10 @@ def runScenario(scenario) {
         error("Build failed: " + e.toString())
 
     } finally {
+        // Switching to 'finally' step index
+        step_id = finally_step_id
         // Run the 'finally' jobs
-        runSteps(scenario['finally'], global_variables, failed_jobs)
+        runSteps(scenario['finally'], global_variables, failed_jobs, jobs_data, step_id)
 
         if (failed_jobs) {
             statuses = []
@@ -247,6 +431,13 @@ def runScenario(scenario) {
                 currentBuild.result = 'FAILURE'
             }
             println "Failed jobs: ${failed_jobs}"
+        } else {
+            currentBuild.result = 'SUCCESS'
+        }
+
+        if (slackReportChannel) {
+            def slack = new com.mirantis.mcp.SlackNotification()
+            slack.jobResultNotification(currentBuild.result, slackReportChannel, '', null, '', 'slack_webhook_url')
         }
     } // finally
 }

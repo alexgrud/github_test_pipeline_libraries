@@ -6,6 +6,8 @@ import static groovy.json.JsonOutput.toJson
 import com.cloudbees.groovy.cps.NonCPS
 import groovy.json.JsonSlurperClassic
 
+import org.jenkinsci.plugins.workflow.cps.EnvActionImpl
+
 /**
  *
  * Common functions
@@ -933,15 +935,60 @@ def checkRemoteBinary(LinkedHashMap config, List extraScmExtensions = []) {
  *  @param extraVars - Multiline YAML text with extra vars
  */
 def mergeEnv(envVar, extraVars) {
-    def common = new com.mirantis.mk.Common()
     try {
         def extraParams = readYaml text: extraVars
         for(String key in extraParams.keySet()) {
             envVar[key] = extraParams[key]
-            common.warningMsg("Parameter ${key} is updated from EXTRA vars.")
+            println("INFO: Parameter ${key} is updated from EXTRA vars.")
         }
     } catch (Exception e) {
-        common.errorMsg("Can't update env parameteres, because: ${e.toString()}")
+        println("ERR: Can't update env parameteres, because: ${e.toString()}")
+    }
+}
+
+def setMapDefaults(Object base, Object defaults, Boolean recursive = false) {
+/**
+ *  Function to update dict with params, if its not set yet
+ *  Will not fail entire job in case any issues.
+ *  Those function will not overwrite current options if already passed.
+ * @param base - dict
+ * @param defaults - dict
+ */
+    if (base instanceof Map && defaults instanceof Map) {
+        defaults.inject(base) { result, key, value ->
+            if (result.containsKey(key)) {
+                setMapDefaults(result[key], value, recursive = true)
+            } else {
+                result.put(key, value)
+            }
+            return result
+        }
+    } else if (!recursive) {
+        echo("Can't update map parameters, wrong input data, skipping")
+    }
+}
+
+def setEnvDefaults(Object envVar, Object defaults) {
+    /**
+     * Function to set default values of an environment variables object
+     * at runtime(patches existing 'env' instance).
+     * @param env - instance of either EnvActionImpl
+     * @param defaults - Map with default values
+     * Example: setEnvDefaults(env, ['ENV_NAME': 'newENV_NAME', 'newvar': 'newval'])
+     * */
+
+    if (!(envVar instanceof EnvActionImpl)) {
+        error("setEnvDefaults 'env' is not an instance of EnvActionImpl")
+    } else if (!(defaults instanceof Map)) {
+        error("setEnvDefaults 'defaults' is not a Map")
+    }
+    defaults.each { key, value ->
+        if (envVar.getEnvironment().containsKey(key)) {
+            println("INFO:setEnvDefaults env variable ${key} already exist, not overwriting")
+        } else {
+            envVar[key] = value
+            println("INFO:setEnvDefaults env variable ${key} has been added")
+        }
     }
 }
 
@@ -1073,4 +1120,26 @@ def isSemVer(version){
     // Official regex for Semver2 (https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string)
     String semVerRegex = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/
     return version ==~ semVerRegex
+}
+
+def readYaml2(LinkedHashMap kwargs) {
+    /**
+     *  readYaml wrapper to workaround case when initial file contains
+     *  yaml data in text field so we need parse it twice.
+     *  * @param file String of filename to read
+     *  * @param text String to be read as Yaml
+     *   Parameters are mutually exclusive
+     */
+    if ((kwargs.get('file') && kwargs.get('text'))) {
+        error('readYaml2 function not able to cover both ["file","text"] opts in same time ')
+    }
+    if (kwargs.get('file')) {
+        data = readYaml(file: kwargs['file'])
+        if (data instanceof String) {
+            return readYaml(text: data)
+        }
+        return data
+    } else if (kwargs.get('text')) {
+        return readYaml(text: kwargs['text'])
+    }
 }

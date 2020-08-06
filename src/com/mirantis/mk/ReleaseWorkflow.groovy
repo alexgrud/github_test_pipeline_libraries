@@ -40,7 +40,7 @@ def checkoutReleaseMetadataRepo(Map params = [:]) {
  *
  * @param key metadata key
  * @param params map with expected parameters:
- *    - toxDockerImage
+ *    - appDockerImage
  *    - outputFormat
  *    - repoDir
  */
@@ -50,9 +50,9 @@ def getReleaseMetadataValue(String key, Map params = [:]) {
 
     String result
     // Get params
-    String toxDockerImage   = params.get('toxDockerImage', 'docker-prod-virtual.docker.mirantis.net/mirantis/external/tox')
-    String outputFormat     = params.get('outputFormat', 'json')
-    String repoDir          = common.getAbsolutePath(params.get('repoDir', 'artifact-metadata'))
+    String appDockerImage = params.get('appDockerImage', 'docker-dev-kaas-local.docker.mirantis.net/mirantis/cicd/artifact-metadata-app:latest')
+    String outputFormat   = params.get('outputFormat', 'json')
+    String repoDir        = common.getAbsolutePath(params.get('repoDir', 'artifact-metadata'))
 
     String opts = ''
     if (outputFormat && !outputFormat.isEmpty()) {
@@ -61,8 +61,8 @@ def getReleaseMetadataValue(String key, Map params = [:]) {
 
     checkoutReleaseMetadataRepo(params)
 
-    docker.image(toxDockerImage).inside("--volume ${repoDir}:/workspace") {
-        result = sh(script: "cd /workspace && tox -qq -e metadata -- ${opts} get --key ${key}", returnStdout: true).trim()
+    docker.image(appDockerImage).inside("--volume ${repoDir}:/workspace") {
+        result = sh(script: "metadata-app --path /workspace/metadata ${opts} get --key ${key}", returnStdout: true).trim()
     }
     common.infoMsg("""
     Release metadata key ${key} has value:
@@ -85,6 +85,8 @@ def getReleaseMetadataValue(String key, Map params = [:]) {
  *    - crTopic
  *    - crAuthorName
  *    - crAuthorEmail
+ *    - valuesFromFile (allows to pass json strings, write them to temp files and pass files to
+ *                      app)
  * @param dirdepth level of creation dirs from key param
  */
 
@@ -97,12 +99,13 @@ def updateReleaseMetadata(String key, String value, Map params, Integer dirdepth
     String gitCredentialsId     = params.get('metadataCredentialsId', 'mcp-ci-gerrit')
     String metadataRepoUrl      = params.get('metadataGitRepoUrl', "ssh://${gitCredentialsId}@gerrit.mcp.mirantis.net:29418/mcp/artifact-metadata")
     String metadataGerritBranch = params.get('metadataGitRepoBranch', 'master')
-    String toxDockerImage       = params.get('toxDockerImage', 'docker-prod-virtual.docker.mirantis.net/mirantis/external/tox')
+    String appDockerImage       = params.get('appDockerImage', 'docker-dev-kaas-local.docker.mirantis.net/mirantis/cicd/artifact-metadata-app:latest')
     String repoDir              = common.getAbsolutePath(params.get('repoDir', 'artifact-metadata'))
     String comment              = params.get('comment', '')
     String crTopic              = params.get('crTopic', '')
     String changeAuthorName     = params.get('crAuthorName', 'MCP-CI')
     String changeAuthorEmail    = params.get('crAuthorEmail', 'mcp-ci-jenkins@ci.mcp.mirantis.net')
+    Boolean valuesFromFile      = params.get('valuesFromFile', false)
 
     def cred = common.getCredentials(gitCredentialsId, 'key')
     String gerritUser = cred.username
@@ -111,7 +114,6 @@ def updateReleaseMetadata(String key, String value, Map params, Integer dirdepth
     String gerritPort = metadataRepoUrl.tokenize(':')[-1].tokenize('/')[0]
     String workspace = common.getWorkspace()
     String venvDir = "${workspace}/gitreview-venv"
-    String metadataDir = "${repoDir}/metadata"
     String ChangeId
     String commitMessage
     String gitRemote
@@ -145,18 +147,54 @@ def updateReleaseMetadata(String key, String value, Map params, Integer dirdepth
         def keyArr = key.split(';')
         def valueArr = value.split(';')
         if (keyArr.size() == valueArr.size()) {
-            docker.image(toxDockerImage).inside("--volume ${repoDir}:/workspace") {
+            docker.image(appDockerImage).inside("--volume ${repoDir}:/workspace") {
                 for (i in 0..keyArr.size()-1) {
-                    sh "cd /workspace && tox -qq -e metadata -- update --create --key '${keyArr[i]}' --value '${valueArr[i]}'"
+                    def valueExpression = "--value '${valueArr[i]}'"
+                    def tmpFile
+                    if (valuesFromFile){
+                        def data = readJSON text: valueArr[i]
+                        // just print temp file name, so writeyaml can write it
+                        tmpFile = sh(script: "mktemp -u -p ${workspace} meta_key_file.XXXXXX", returnStdout: true).trim()
+                        // yaml is native format for meta app for loading values
+                        writeYaml data: data, file: tmpFile
+                        valueExpression = "--file ${tmpFile}"
+                    }
+                    try {
+                        sh "metadata-app --path /workspace/metadata update --create --key '${keyArr[i]}' ${valueExpression}"
+                    } finally {
+                        if (valuesFromFile){
+                            sh "rm ${tmpFile}"
+                        }
+                    }
                 }
             }
         }
 
+        String status = sh(script: "git -C ${repoDir} status -s", returnStdout: true).trim()
+        if (!status){
+            common.warningMsg('All values seem up to date, nothing to update')
+            return
+        }
+        common.infoMsg("""Next files will be updated:
+                       ${status}
+                       """)
         commitMessage =
                 """${comment}
 
                |${ChangeId}
             """.stripMargin()
+
+        // Add some useful info (if it present) to commit message
+        if (env.BUILD_URL) {
+            commitMessage += "Build-Url: ${env.BUILD_URL}\n"
+        }
+        if (env.GERRIT_CHANGE_COMMIT_MESSAGE) {
+            def jira = new com.mirantis.mk.Atlassian()
+            jira.extractJIRA(env.GERRIT_CHANGE_COMMIT_MESSAGE).each {
+                commitMessage += "Related-To: ${it}\n"
+            }
+        }
+
         //commit change
         git.commitGitChanges(repoDir, commitMessage, changeAuthorEmail, changeAuthorName, false)
         //post change

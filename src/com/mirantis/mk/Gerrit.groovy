@@ -173,21 +173,22 @@ def gerritPatchsetCheckout(gerritUrl, gerritRef, gerritBranch, credentialsId, pa
  * Return gerrit change object from gerrit API
  * @param gerritName gerrit user name (usually GERRIT_NAME property)
  * @param gerritHost gerrit host (usually GERRIT_HOST property)
+ * @param gerritPort gerrit port (usually GERRIT_PORT property, default 29418)
  * @param gerritChangeNumber gerrit change number (usually GERRIT_CHANGE_NUMBER property)
  * @param credentialsId jenkins credentials id for gerrit
  * @param includeCurrentPatchset do you want to include current (last) patchset
  * @return gerrit change object
  */
-def getGerritChange(gerritName, gerritHost, gerritChangeNumber, credentialsId, includeCurrentPatchset = false){
+def getGerritChange(gerritName, gerritHost, gerritChangeNumber, credentialsId, includeCurrentPatchset = false, gerritPort = '29418'){
     def common = new com.mirantis.mk.Common()
     def ssh = new com.mirantis.mk.Ssh()
     ssh.prepareSshAgentKey(credentialsId)
-    ssh.ensureKnownHosts(gerritHost)
+    ssh.ensureKnownHosts("${gerritHost}:${gerritPort}")
     def curPatchset = "";
     if(includeCurrentPatchset){
         curPatchset = "--current-patch-set"
     }
-    return common.parseJSON(ssh.agentSh(String.format("ssh -p 29418 %s@%s gerrit query ${curPatchset} --format=JSON change:%s", gerritName, gerritHost, gerritChangeNumber)))
+    return common.parseJSON(ssh.agentSh(String.format("ssh -p %s %s@%s gerrit query ${curPatchset} --format=JSON change:%s", gerritPort, gerritName, gerritHost, gerritChangeNumber)))
 }
 
 /**
@@ -459,4 +460,72 @@ def prepareGerritAutoCommit(LinkedHashMap params) {
         jsonChange = readJSON text: gerritChange
         return getGerritChange(gerritUser, gerritHost, jsonChange['number'], gerritCredentials, true)
     }
+}
+
+/**
+ * Download change from gerrit, if needed repository maybe pre cloned
+ *
+ * @param path               Directory to checkout repository to
+ * @param url                Source Gerrit repository URL
+ * @param reference          Gerrit reference to download (e.g refs/changes/77/66777/16)
+ * @param type               type of gerrit download
+ * @param credentialsId      Credentials ID to use for source Git
+ * @param gitCheckoutParams  map with additional parameters for git.checkoutGitRepository method e.g:
+ *                           [ branch: 'master', poll: true, timeout: 10, depth: 0 ]
+ * @param doGitClone      boolean whether to pre clone and do some checkout
+ */
+def downloadChange(path, url, reference, credentialsId, type = 'cherry-pick', doGitClone = true, Map gitCheckoutParams = [:]){
+    def git = new com.mirantis.mk.Git()
+    def ssh = new com.mirantis.mk.Ssh()
+    def cmd
+    switch(type) {
+        case 'cherry-pick':
+            cmd = "git fetch ${url} ${reference} && git cherry-pick FETCH_HEAD"
+            break;
+        case 'format-patch':
+            cmd = "git fetch ${url} ${reference} && git format-patch -1 --stdout FETCH_HEAD"
+            break;
+        case 'pull':
+            cmd = "git pull ${url} ${reference}"
+            break;
+        default:
+            error("Unsupported gerrit download type")
+    }
+    if (doGitClone) {
+        def branch =  gitCheckoutParams.get('branch', 'master')
+        def poll = gitCheckoutParams.get('poll', true)
+        def timeout = gitCheckoutParams.get('timeout', 10)
+        def depth = gitCheckoutParams.get('depth', 0)
+        git.checkoutGitRepository(path, url, branch, credentialsId, poll, timeout, depth, '')
+    }
+    ssh.prepareSshAgentKey(credentialsId)
+    dir(path){
+         ssh.agentSh(cmd)
+    }
+}
+
+/**
+ * Parse gerrit event text and if Workflow +1 is detected,
+ * return true
+ *
+ * @param gerritEventCommentText  gerrit event comment text
+ * @param gerritEventType         type of gerrit event
+ */
+def isGate(gerritEventCommentText, gerritEventType) {
+    def common = new com.mirantis.mk.Common()
+    def gerritEventCommentTextStr = ''
+    def res = false
+    if (gerritEventCommentText) {
+        try{
+            gerritEventCommentTextStr = new String(gerritEventCommentText.decodeBase64())
+        } catch (e) {
+            gerritEventCommentTextStr = gerritEventCommentText
+        }
+        common.infoMsg("GERRIT_EVENT_COMMENT_TEXT is ${gerritEventCommentTextStr}")
+    }
+    if (gerritEventType == 'comment-added' && gerritEventCommentTextStr =~ /^Patch Set \d+:\s.*Workflow\+1$/) {
+        common.infoMsg("Running in gate mode")
+        res = true
+    }
+    return res
 }
